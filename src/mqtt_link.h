@@ -6,10 +6,12 @@
 namespace mqtt_link {
 
 struct Config {
-  const char* host;
+  String host;
   uint16_t port;
-  const char* deviceId;
-  const char* token;
+  String deviceId;
+  String token;
+  // Se llama tras MAX_AUTH_FAILURES rechazos seguidos (dispositivo borrado o token rotado)
+  void (*onUnauthorized)();
 };
 
 void begin(const Config& config);

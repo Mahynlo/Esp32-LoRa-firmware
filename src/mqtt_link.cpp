@@ -20,6 +20,7 @@ String topicCommands, topicState, topicAck, topicStatus;
 unsigned long reconnectDelay = 1000;
 unsigned long nextAttemptAt = 0;
 bool firstStateSent = false;
+int authFailures = 0;
 
 const char* resetReason() {
   switch (esp_reset_reason()) {
@@ -57,16 +58,23 @@ void onMessage(char* topic, uint8_t* payload, unsigned int length) {
 }
 
 bool connectNow() {
-  Serial.printf("[mqtt] Conectando a %s:%u...\n", cfg.host, cfg.port);
+  Serial.printf("[mqtt] Conectando a %s:%u...\n", cfg.host.c_str(), cfg.port);
   // Última voluntad: si se corta la corriente, el broker publica "offline" por nosotros
-  bool ok = client.connect(cfg.deviceId, cfg.deviceId, cfg.token,
+  bool ok = client.connect(cfg.deviceId.c_str(), cfg.deviceId.c_str(), cfg.token.c_str(),
                            topicStatus.c_str(), 1, false, "offline", true);
   if (!ok) {
-    // 4 = credenciales incorrectas, 5 = no autorizado (dispositivo borrado o token rotado)
-    Serial.printf("[mqtt] Falló (estado %d)\n", client.state());
+    int state = client.state();
+    Serial.printf("[mqtt] Falló (estado %d)\n", state);
+    // 4 = credenciales incorrectas, 5 = no autorizado: el dispositivo se borró o su token se rotó
+    if (state == MQTT_CONNECT_BAD_CREDENTIALS || state == MQTT_CONNECT_UNAUTHORIZED) {
+      if (++authFailures >= MAX_AUTH_FAILURES && cfg.onUnauthorized) cfg.onUnauthorized();
+    } else {
+      authFailures = 0;
+    }
     return false;
   }
 
+  authFailures = 0;
   Serial.println("[mqtt] Conectado");
   client.subscribe(topicCommands.c_str(), 1);
   client.publish(topicStatus.c_str(), "online", false);
@@ -86,7 +94,8 @@ void begin(const Config& config) {
   topicAck = base + "ack";
   topicStatus = base + "status";
 
-  client.setServer(cfg.host, cfg.port);
+  // PubSubClient guarda el puntero: cfg es una copia que vive todo el programa
+  client.setServer(cfg.host.c_str(), cfg.port);
   client.setKeepAlive(MQTT_KEEPALIVE_S);
   client.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
   client.setBufferSize(MQTT_BUFFER_SIZE);

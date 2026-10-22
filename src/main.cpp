@@ -1,16 +1,24 @@
 // Firmware del nodo: LED controlado desde broker_api por MQTT.
 // Protocolo y tópicos: broker_api/docs/MQTT.md
+//
+// Arranque:
+//   - Sin configurar (o BOOT presionado 3 s al encender): portal de configuración
+//     "ESP32-LORA-XXXX" para elegir Wi-Fi, servidor y código de vinculación.
+//   - Configurado: se conecta al Wi-Fi guardado y al broker MQTT.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include <time.h>
 
 #include "app_config.h"
+#include "config_store.h"
 #include "led.h"
 #include "mqtt_link.h"
-#include "secrets.h"
+#include "provisioning.h"
 
 namespace {
+DeviceConfig config;
+bool configuring = false;
 unsigned long lastHeartbeat = 0;
 wl_status_t lastWifiStatus = WL_IDLE_STATUS;
 
@@ -23,6 +31,26 @@ void logWifiChanges() {
   } else {
     Serial.println("[wifi] Sin conexión, reintentando...");
   }
+}
+
+// ¿BOOT presionado durante CONFIG_BUTTON_HOLD_MS al encender?
+bool configButtonHeld() {
+  pinMode(CONFIG_BUTTON_PIN, INPUT_PULLUP);
+  if (digitalRead(CONFIG_BUTTON_PIN) != LOW) return false;
+  Serial.println("[boot] BOOT presionado: mantenlo para borrar la configuración...");
+  unsigned long start = millis();
+  while (digitalRead(CONFIG_BUTTON_PIN) == LOW) {
+    if (millis() - start >= CONFIG_BUTTON_HOLD_MS) return true;
+    delay(20);
+  }
+  return false;
+}
+
+// El broker rechazó las credenciales varias veces: el dispositivo ya no existe en la app
+void onUnauthorized() {
+  Serial.println("[mqtt] Credenciales rechazadas: se borran y se vuelve al portal de configuración");
+  config_store::clearCredentials();
+  ESP.restart();
 }
 }  // namespace
 
@@ -37,19 +65,40 @@ void setup() {
   esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
   esp_task_wdt_add(nullptr);
 
-  // Wi-Fi con reconexión automática (no bloquea el arranque)
+  if (configButtonHeld()) {
+    Serial.println("[boot] Configuración borrada");
+    config_store::clearAll();
+  }
+
+  config = config_store::load();
   WiFi.mode(WIFI_STA);
+
+  if (!config.paired()) {
+    configuring = true;
+    provisioning::start(config);
+    return;
+  }
+
+  // Wi-Fi guardado con reconexión automática (no bloquea el arranque)
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin();
 
   // Hora por NTP para descartar comandos vencidos (si no hay internet, se omite esa revisión)
   configTime(0, 0, "pool.ntp.org", "time.google.com");
 
-  mqtt_link::begin({MQTT_HOST, MQTT_PORT, DEVICE_ID, DEVICE_TOKEN});
+  Serial.printf("[boot] Dispositivo %s, servidor %s\n", config.deviceId.c_str(), config.host.c_str());
+  mqtt_link::begin({config.host, config.mqttPort, config.deviceId, config.token, onUnauthorized});
 }
 
 void loop() {
   esp_task_wdt_reset();
+
+  if (configuring) {
+    provisioning::loop();
+    delay(10);
+    return;
+  }
+
   logWifiChanges();
   mqtt_link::loop();
 
