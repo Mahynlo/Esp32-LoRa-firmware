@@ -3,15 +3,18 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <esp_system.h>
 
 #include "app_config.h"
+#include "ca_cert.h"
 #include "commands.h"
 #include "led.h"
 
 namespace {
 
-WiFiClient net;
+// MQTTS: el certificado del servidor se valida con CA_CERTS antes de enviar el token
+WiFiClientSecure net;
 PubSubClient client(net);
 mqtt_link::Config cfg;
 
@@ -65,6 +68,9 @@ bool connectNow() {
   if (!ok) {
     int state = client.state();
     Serial.printf("[mqtt] Falló (estado %d)\n", state);
+    // -2 = sin conexión: puede ser TLS (certificado no válido para este servidor)
+    char tlsError[100];
+    if (net.lastError(tlsError, sizeof(tlsError)) != 0) Serial.printf("[mqtt] TLS: %s\n", tlsError);
     // 4 = credenciales incorrectas, 5 = no autorizado: el dispositivo se borró o su token se rotó
     if (state == MQTT_CONNECT_BAD_CREDENTIALS || state == MQTT_CONNECT_UNAUTHORIZED) {
       if (++authFailures >= MAX_AUTH_FAILURES && cfg.onUnauthorized) cfg.onUnauthorized();
@@ -93,6 +99,9 @@ void begin(const Config& config) {
   topicState = base + "state";
   topicAck = base + "ack";
   topicStatus = base + "status";
+
+  net.setCACert(CA_CERTS);
+  net.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
 
   // PubSubClient guarda el puntero: cfg es una copia que vive todo el programa
   client.setServer(cfg.host.c_str(), cfg.port);

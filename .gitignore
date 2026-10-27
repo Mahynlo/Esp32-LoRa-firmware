@@ -6,3 +6,7 @@
 
 # Credenciales (Wi-Fi, token del dispositivo)
 include/secrets.h
+
+# CAs de confianza generadas por broker_api (pnpm certs:dev --firmware <esta carpeta>);
+# dependen de cada PC de desarrollo
+include/ca_cert.h

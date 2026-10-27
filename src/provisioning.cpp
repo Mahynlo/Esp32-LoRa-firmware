@@ -3,10 +3,12 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <esp_task_wdt.h>
 
 #include "app_config.h"
+#include "ca_cert.h"
 #include "led.h"
 
 namespace {
@@ -19,8 +21,8 @@ char hostBuf[64];
 char apiPortBuf[6];
 char mqttPortBuf[6];
 WiFiManagerParameter paramHost("host", "Servidor (IP de la PC con broker_api)", "", sizeof(hostBuf) - 1);
-WiFiManagerParameter paramApiPort("apiPort", "Puerto API", "", sizeof(apiPortBuf) - 1);
-WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTT", "", sizeof(mqttPortBuf) - 1);
+WiFiManagerParameter paramApiPort("apiPort", "Puerto API (HTTPS)", "", sizeof(apiPortBuf) - 1);
+WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTT (MQTTS)", "", sizeof(mqttPortBuf) - 1);
 WiFiManagerParameter paramCode("code", "Código de vinculación (lo muestra la app)", "", 12);
 
 bool paramsSaved = false;
@@ -41,13 +43,18 @@ void openPortal() {
   wm.startConfigPortal(name.c_str(), CONFIG_AP_PASSWORD);
 }
 
-// Canjea el código por id y token. Devuelve un mensaje de error o "" si salió bien.
+// Canjea el código por id y token por HTTPS. Devuelve un mensaje de error o "" si salió bien.
 String claim(const char* code) {
+  // El token llega en esta respuesta: solo se acepta un servidor con certificado de CA_CERTS
+  WiFiClientSecure tls;
+  tls.setCACert(CA_CERTS);
+  tls.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
+
   HTTPClient http;
-  String url = "http://" + config.host + ":" + config.apiPort + "/api/devices/claim";
+  String url = "https://" + config.host + ":" + config.apiPort + "/api/devices/claim";
   Serial.printf("[config] Canjeando código en %s\n", url.c_str());
   http.setTimeout(10000);
-  if (!http.begin(url)) return "URL inválida";
+  if (!http.begin(tls, url)) return "URL inválida";
   http.addHeader("Content-Type", "application/json");
 
   JsonDocument body;
@@ -60,7 +67,11 @@ String claim(const char* code) {
   String response = http.getString();
   http.end();
 
-  if (status <= 0) return "No se pudo conectar con el servidor (" + HTTPClient::errorToString(status) + ")";
+  if (status <= 0) {
+    char tlsError[100];
+    String detail = tls.lastError(tlsError, sizeof(tlsError)) != 0 ? String(" - TLS: ") + tlsError : "";
+    return "No se pudo conectar con el servidor (" + HTTPClient::errorToString(status) + ")" + detail;
+  }
   if (status != 201) return "El servidor rechazó el código (HTTP " + String(status) + "): " + response;
 
   JsonDocument doc;

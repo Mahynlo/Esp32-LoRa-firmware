@@ -3,6 +3,7 @@
 Firmware del ESP32 que se conecta a **broker_api** por MQTT. Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor.
 
 - Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano).
+- **Todo cifrado**: canjea el código por HTTPS y se conecta por MQTTS, validando el certificado del servidor.
 - Enciende/apaga el LED con los comandos de la app y confirma cada uno (`ack`).
 - Informa su estado al conectar, al cambiar y cada 30 s (latido).
 - **Última voluntad** MQTT: si se corta la corriente, el broker avisa a la app en ~22 s.
@@ -24,13 +25,24 @@ pio device monitor      # ver los logs (115200 baudios)
 
 Librerías (se descargan solas): PubSubClient, ArduinoJson, WiFiManager.
 
+**Antes de compilar** hace falta `include/ca_cert.h` (las autoridades en las que confía el ESP32). Lo genera broker_api:
+
+```bash
+# en broker_api
+pnpm certs:dev --firmware <ruta de esta carpeta>
+```
+
+No se versiona: depende de la CA de cada PC de desarrollo. Si cambia la IP de la PC, basta con volver a correr ese comando en broker_api; la CA es la misma y el firmware no se recompila.
+
+Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) manteniendo OTA.
+
 ## Primera configuración (vinculación)
 
-1. Arranca **broker_api** (`pnpm dev`) y la app. La PC y el ESP32 deben estar en la misma red, con los puertos 3000 y 1883 permitidos en el Firewall de Windows.
+1. Arranca **broker_api** (`pnpm dev`, con TLS configurado) y la app. La PC y el ESP32 deben estar en la misma red, con los puertos **3443** (HTTPS) y **8883** (MQTTS) permitidos en el Firewall de Windows.
 2. En la app: **Dispositivos → Agregar** → nombre → **Obtener código** (vale 10 minutos).
 3. Enciende el ESP32. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`** (clave `lora1234`).
 4. Conéctate a esa red desde el teléfono. Se abre el portal (si no, entra a `http://192.168.4.1`) → **Configure WiFi**.
-5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja los puertos 3000 y 1883 y escribe el código.
+5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja los puertos 3443 y 8883 y escribe el código.
 6. Al guardar, el ESP32 canjea el código, guarda su id y token y se reinicia. En la app aparece como **en línea**.
 
 En el monitor serie se ve cada paso (`[config]`, `[wifi]`, `[mqtt]`, `[cmd]`).
@@ -41,17 +53,19 @@ En el monitor serie se ve cada paso (`[config]`, `[wifi]`, `[mqtt]`, `[cmd]`).
 |---|---|
 | Mantener **BOOT** presionado 3 s al encender | Borra todo (Wi-Fi, servidor, credenciales) y abre el portal |
 | El dispositivo se borró en la app o se rotó su token | Tras 3 rechazos seguidos del broker, borra sus credenciales y abre el portal (el Wi-Fi se conserva) |
-| Cambió la IP de la PC | Reconfigurar con BOOT |
+| Cambió la IP de la PC | Volver a correr `pnpm certs:dev` en broker_api (nuevo certificado para la IP) y reconfigurar con BOOT |
+| Venía de un firmware sin cifrado | Al arrancar pasa solo los puertos guardados 3000/1883 a 3443/8883 y conserva la vinculación |
 
 ## Estructura
 
 ```
 include/app_config.h   Pines, intervalos, puertos por defecto, clave del portal, versión
+include/ca_cert.h      CAs de confianza (generado por broker_api, no se versiona)
 src/
 ├── main.cpp           Arranque (portal o modo normal) y loop
 ├── config_store.*     Configuración en la memoria no volátil (NVS)
-├── provisioning.*     Portal WiFiManager y canje del código (POST /api/devices/claim)
-├── mqtt_link.*        Conexión MQTT, última voluntad, reconexión, estado y ack
+├── provisioning.*     Portal WiFiManager y canje del código por HTTPS (POST /api/devices/claim)
+├── mqtt_link.*        Conexión MQTTS, última voluntad, reconexión, estado y ack
 ├── commands.*         Validación de comandos (lista blanca, repetidos, antigüedad)
 └── led.*              Salida controlada (después: motor)
 ```
@@ -60,10 +74,12 @@ src/
 
 - Cambia `CONFIG_AP_PASSWORD` en `include/app_config.h`: mientras el portal está abierto, quien la conozca y esté cerca podría configurar el equipo.
 - El token se guarda sin cifrar en la flash. Si el equipo se pierde, bórralo o rota su token desde la app: su conexión se corta al instante.
-- Sin TLS todavía: solo para la red local de pruebas. Ver `broker_api/docs/SEGURIDAD.md`.
+- La conexión con broker_api va cifrada (HTTPS y MQTTS) y el ESP32 rechaza un servidor cuyo certificado no esté firmado por las CAs de `ca_cert.h`, antes de enviar el token. Si el log muestra `[mqtt] TLS: ...`, el certificado del servidor no corresponde a la IP configurada o a la CA del firmware.
+- No se revisa la fecha de vencimiento del certificado (el core no lo soporta); el del servidor de desarrollo dura 825 días.
+- Ver `broker_api/docs/SEGURIDAD.md`.
 
 ## Pendiente para el motor
 
 - Acciones con rangos (velocidad, rampas) validadas aquí **y** en la API, y límites físicos que ningún comando pueda superar.
 - Tiempo máximo sin conexión tras el cual el motor se detiene.
-- La flash está al 81 %: para sumar LoRa y el motor, cambiar la tabla de particiones (`board_build.partitions = huge_app.csv` o una propia con OTA).
+- Espacio: con `min_spiffs.csv` quedan ~0,9 MB libres para LoRa y el motor; si no alcanza, `huge_app.csv` (3 MB, sin OTA).

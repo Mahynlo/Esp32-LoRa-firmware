@@ -11,6 +11,7 @@
 #define MQTT_KEEPALIVE_S 15          // el broker detecta un corte en ~1,5 × keepalive (~22 s)
 #define MQTT_SOCKET_TIMEOUT_S 5      // espera máxima de la conexión TCP
 #define MQTT_BUFFER_SIZE 512         // tamaño máximo de un mensaje MQTT
+#define TLS_HANDSHAKE_TIMEOUT_S 10   // espera máxima del saludo TLS
 
 // Latido: estado publicado cada cierto tiempo aunque no cambie
 #define HEARTBEAT_INTERVAL_MS 30000
@@ -25,10 +26,17 @@
 #define WATCHDOG_TIMEOUT_S 30
 
 // ── Configuración (portal) ───────────────────────────────────────────────
-// Valores sugeridos en el portal; se pueden cambiar ahí
+// Valores sugeridos en el portal; se pueden cambiar ahí.
+// Todo va cifrado (TLS): HTTPS para canjear el código y MQTTS para el broker.
+// El ESP32 valida el certificado del servidor con las CAs de include/ca_cert.h
+// (lo genera broker_api con: pnpm certs:dev --firmware <esta carpeta>).
 #define DEFAULT_SERVER_HOST "192.168.1.10"
-#define DEFAULT_API_PORT 3000
-#define DEFAULT_MQTT_PORT 1883
+#define DEFAULT_API_PORT 3443
+#define DEFAULT_MQTT_PORT 8883
+
+// Versión del formato guardado en NVS. 2 = puertos con TLS: una configuración
+// guardada con los puertos sin cifrar (3000/1883) se pasa sola a 3443/8883.
+#define CONFIG_VERSION 2
 
 // Clave de la red "ESP32-LORA-XXXX" del portal (mínimo 8 caracteres).
 // Cámbiala: quien la conozca y esté cerca podría reconfigurar el equipo mientras el portal esté abierto.

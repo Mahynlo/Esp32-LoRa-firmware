@@ -6,8 +6,8 @@
 // La red Wi-Fi la guarda el propio ESP32 (WiFiManager); aquí va lo de broker_api.
 struct DeviceConfig {
   String host;         // IP o nombre de la PC con broker_api
-  uint16_t apiPort;    // puerto HTTP (para canjear el código)
-  uint16_t mqttPort;   // puerto MQTT
+  uint16_t apiPort;    // puerto HTTPS (para canjear el código)
+  uint16_t mqttPort;   // puerto MQTTS
   String deviceId;     // usuario MQTT (lo entrega /claim)
   String token;        // contraseña MQTT (lo entrega /claim)
 
