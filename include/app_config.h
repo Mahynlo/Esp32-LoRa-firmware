@@ -42,9 +42,17 @@
 // Cámbiala: quien la conozca y esté cerca podría reconfigurar el equipo mientras el portal esté abierto.
 #define CONFIG_AP_PASSWORD "lora1234"
 
-// Mantener presionado BOOT al encender este tiempo borra la configuración y abre el portal
+// Botón BOOT:
+//   - con el equipo funcionando, mantenerlo CONFIG_PORTAL_HOLD_MS abre el portal para
+//     cambiar Wi-Fi o servidor (conserva la vinculación);
+//   - presionarlo justo al encender y mantenerlo CONFIG_BUTTON_HOLD_MS borra todo.
 #define CONFIG_BUTTON_PIN 0
 #define CONFIG_BUTTON_HOLD_MS 3000
+#define CONFIG_PORTAL_HOLD_MS 5000
+
+// Portal abierto en un equipo ya vinculado: sin uso este tiempo, se cierra y el equipo
+// vuelve a funcionar con su configuración anterior (no queda fuera de servicio por error)
+#define CONFIG_PORTAL_TIMEOUT_S 300
 
 // Rechazos seguidos del broker (dispositivo borrado o token rotado) antes de volver al portal
 #define MAX_AUTH_FAILURES 3

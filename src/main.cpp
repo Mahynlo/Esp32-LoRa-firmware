@@ -2,9 +2,12 @@
 // Protocolo y tópicos: broker_api/docs/MQTT.md
 //
 // Arranque:
-//   - Sin configurar (o BOOT presionado 3 s al encender): portal de configuración
-//     "ESP32-LORA-XXXX" para elegir Wi-Fi, servidor y código de vinculación.
+//   - Sin configurar: portal de configuración "ESP32-LORA-XXXX" para elegir Wi-Fi,
+//     servidor y código de vinculación.
 //   - Configurado: se conecta al Wi-Fi guardado y al broker MQTT.
+//   - BOOT 5 s con el equipo funcionando: portal para cambiar Wi-Fi o servidor,
+//     conservando la vinculación.
+//   - BOOT presionado justo al encender, 3 s: borra todo y abre el portal.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
@@ -46,6 +49,32 @@ bool configButtonHeld() {
   return false;
 }
 
+// BOOT mantenido CONFIG_PORTAL_HOLD_MS con el equipo funcionando: reiniciar en el portal
+// de configuración, conservando Wi-Fi y vinculación (se cambia solo lo que se escriba)
+void checkPortalButton() {
+  static unsigned long pressedSince = 0;
+  static bool pressed = false;
+  if (digitalRead(CONFIG_BUTTON_PIN) != LOW) {
+    if (pressed) Serial.println("[boot] BOOT soltado antes de tiempo: no se abre el portal");
+    pressed = false;
+    return;
+  }
+  if (!pressed) {
+    pressed = true;
+    pressedSince = millis();
+    Serial.printf("[boot] BOOT presionado: mantenlo %d s para abrir el portal de configuración\n",
+                  CONFIG_PORTAL_HOLD_MS / 1000);
+    return;
+  }
+  if (millis() - pressedSince < CONFIG_PORTAL_HOLD_MS) return;
+
+  Serial.println("[boot] Abriendo el portal de configuración...");
+  config_store::requestPortal();
+  led::set(false);
+  delay(200);
+  ESP.restart();
+}
+
 // El broker rechazó las credenciales varias veces: el dispositivo ya no existe en la app
 void onUnauthorized() {
   Serial.println("[mqtt] Credenciales rechazadas: se borran y se vuelve al portal de configuración");
@@ -73,7 +102,8 @@ void setup() {
   config = config_store::load();
   WiFi.mode(WIFI_STA);
 
-  if (!config.paired()) {
+  // Sin vincular, o se pidió con BOOT 5 s: portal de configuración
+  if (!config.paired() || config_store::takePortalRequest()) {
     configuring = true;
     provisioning::start(config);
     return;
@@ -99,6 +129,7 @@ void loop() {
     return;
   }
 
+  checkPortalButton();
   logWifiChanges();
   mqtt_link::loop();
 

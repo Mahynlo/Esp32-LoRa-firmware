@@ -25,7 +25,15 @@ WiFiManagerParameter paramApiPort("apiPort", "Puerto API (HTTPS)", "", sizeof(ap
 WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTT (MQTTS)", "", sizeof(mqttPortBuf) - 1);
 WiFiManagerParameter paramCode("code", "Código de vinculación (lo muestra la app)", "", 12);
 
+// Ayuda que se muestra arriba de los campos cuando el equipo ya está vinculado
+WiFiManagerParameter paramPairedHelp(
+    "<p><b>Este equipo ya está vinculado.</b><br>"
+    "Deja <b>SSID y contraseña vacíos</b> para conservar la red Wi-Fi actual, "
+    "y el <b>código vacío</b> para conservar la vinculación. "
+    "Cambia solo lo que necesites y presiona <b>Save</b>.</p>");
+
 bool paramsSaved = false;
+bool wasPaired = false;  // al abrir el portal ya tenía id y token
 unsigned long lastBlink = 0;
 
 String apName() {
@@ -86,11 +94,26 @@ String claim(const char* code) {
   return "";
 }
 
+// Puerto escrito en el portal, o el anterior si quedó vacío o no es un número válido
+uint16_t portOr(const char* value, uint16_t fallback) {
+  int port = atoi(value);
+  return port > 0 && port <= 65535 ? static_cast<uint16_t>(port) : fallback;
+}
+
 void onSaveParams() {
-  config.host = paramHost.getValue();
-  config.apiPort = static_cast<uint16_t>(atoi(paramApiPort.getValue()));
-  config.mqttPort = static_cast<uint16_t>(atoi(paramMqttPort.getValue()));
+  String host = paramHost.getValue();
+  host.trim();
+  if (host.length() > 0) config.host = host;
+  config.apiPort = portOr(paramApiPort.getValue(), config.apiPort);
+  config.mqttPort = portOr(paramMqttPort.getValue(), config.mqttPort);
   paramsSaved = true;
+}
+
+// Sin uso del portal en un equipo vinculado: volver a funcionar como estaba
+void onPortalTimeout() {
+  Serial.println("[config] Portal sin uso: se cierra y se conserva la configuración anterior");
+  led::set(false);
+  ESP.restart();
 }
 
 }  // namespace
@@ -99,6 +122,7 @@ namespace provisioning {
 
 void start(const DeviceConfig& current) {
   config = current;
+  wasPaired = config.paired();
   snprintf(hostBuf, sizeof(hostBuf), "%s", config.host.c_str());
   snprintf(apiPortBuf, sizeof(apiPortBuf), "%u", config.apiPort);
   snprintf(mqttPortBuf, sizeof(mqttPortBuf), "%u", config.mqttPort);
@@ -106,6 +130,7 @@ void start(const DeviceConfig& current) {
   paramApiPort.setValue(apiPortBuf, sizeof(apiPortBuf) - 1);
   paramMqttPort.setValue(mqttPortBuf, sizeof(mqttPortBuf) - 1);
 
+  if (wasPaired) wm.addParameter(&paramPairedHelp);
   wm.addParameter(&paramHost);
   wm.addParameter(&paramApiPort);
   wm.addParameter(&paramMqttPort);
@@ -114,7 +139,13 @@ void start(const DeviceConfig& current) {
   wm.setSaveParamsCallback(onSaveParams);
   wm.setBreakAfterConfig(true);        // avisar al guardar aunque falle el Wi-Fi
   wm.setConfigPortalBlocking(false);   // el loop sigue corriendo (watchdog, LED)
-  wm.setConfigPortalTimeout(0);        // abierto hasta que se configure
+  if (wasPaired) {
+    // Ya funcionaba: si nadie usa el portal, se cierra solo (cuenta desde el último uso)
+    wm.setConfigPortalTimeout(CONFIG_PORTAL_TIMEOUT_S);
+    wm.setConfigPortalTimeoutCallback(onPortalTimeout);
+  } else {
+    wm.setConfigPortalTimeout(0);      // equipo nuevo: abierto hasta que se configure
+  }
   wm.setConnectTimeout(15);            // segundos para conectar a la red elegida
 
   openPortal();
@@ -132,6 +163,9 @@ void loop() {
   if (!paramsSaved) return;
   paramsSaved = false;
 
+  // Con SSID vacío WiFiManager no se conecta: usar la red Wi-Fi guardada
+  if (WiFi.status() != WL_CONNECTED) WiFi.begin();
+
   // Esperar la conexión a la red elegida
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
@@ -145,15 +179,30 @@ void loop() {
     return;
   }
 
-  String error = claim(paramCode.getValue());
-  if (error.length() > 0) {
-    Serial.printf("[config] %s\n", error.c_str());
+  String code = paramCode.getValue();
+  code.trim();
+  if (code.length() == 0 && !wasPaired) {
+    Serial.println("[config] Falta el código de vinculación (lo muestra la app en Agregar dispositivo)");
     openPortal();
     return;
   }
 
+  if (code.length() > 0) {
+    // Código nuevo: el equipo se registra de nuevo (en esta u otra cuenta)
+    String error = claim(code.c_str());
+    if (error.length() > 0) {
+      Serial.printf("[config] %s\n", error.c_str());
+      openPortal();
+      return;
+    }
+    Serial.printf("[config] Vinculado como %s\n", config.deviceId.c_str());
+  } else {
+    Serial.println("[config] Configuración actualizada; se conserva la vinculación");
+  }
+
   config_store::save(config);
-  Serial.printf("[config] Vinculado como %s. Reiniciando...\n", config.deviceId.c_str());
+  Serial.printf("[config] Servidor %s (API %u, MQTT %u). Reiniciando...\n",
+                config.host.c_str(), config.apiPort, config.mqttPort);
   led::set(false);
   delay(500);
   ESP.restart();

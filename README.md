@@ -2,7 +2,7 @@
 
 Firmware del ESP32 que se conecta a **broker_api** por MQTT. Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor.
 
-- Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano).
+- Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano). Se vuelve a abrir con **BOOT 5 s** para cambiar la red o la IP sin perder la vinculación.
 - **Todo cifrado**: canjea el código por HTTPS y se conecta por MQTTS, validando el certificado del servidor.
 - Enciende/apaga el LED con los comandos de la app y confirma cada uno (`ack`).
 - Informa su estado al conectar, al cambiar y cada 30 s (latido).
@@ -47,13 +47,28 @@ Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) 
 
 En el monitor serie se ve cada paso (`[config]`, `[wifi]`, `[mqtt]`, `[cmd]`).
 
-## Reconfigurar
+## Reconfigurar (cambiar Wi-Fi o IP del servidor)
+
+Con el equipo **ya funcionando**, mantén presionado **BOOT 5 segundos**. Se reinicia en el portal: el LED parpadea lento y aparece la red `ESP32-LORA-XXXX` (clave `lora1234`). Mientras el portal está abierto, el equipo se ve desconectado en la app.
+
+En el portal (**Configure WiFi**) dice *"Este equipo ya está vinculado"*. Cambia solo lo que necesites:
+
+| Quiero… | SSID y contraseña | Servidor y puertos | Código |
+|---|---|---|---|
+| Cambiar de red Wi-Fi | La red nueva | Sin cambios | **Vacío** |
+| Cambiar la IP del servidor | **Vacíos** (conserva la red actual) | La IP nueva | **Vacío** |
+| Vincularlo a otra cuenta | Vacíos o la red nueva | Sin cambios | Un código nuevo de la app |
+
+Al presionar **Save** guarda y se reinicia. Con el código vacío sigue siendo **el mismo dispositivo** en la app, con su historial. Si nadie usa el portal durante 5 minutos, se cierra solo y el equipo vuelve a funcionar como estaba.
+
+Si cambias la IP del servidor, corre antes `pnpm certs:dev` en broker_api: el certificado tiene que incluir la IP nueva. La CA no cambia, así que el firmware no se recompila.
+
+### Otras situaciones
 
 | Situación | Qué pasa |
 |---|---|
-| Mantener **BOOT** presionado 3 s al encender | Borra todo (Wi-Fi, servidor, credenciales) y abre el portal |
+| Borrar todo (de fábrica) | Presiona **EN** y, justo después de soltarlo, mantén **BOOT** 3 s. Borra Wi-Fi, servidor y vinculación y abre el portal; hará falta un código nuevo. Si BOOT ya estaba presionado al soltar EN, la placa entra en modo de subida de firmware: presiona EN otra vez |
 | El dispositivo se borró en la app o se rotó su token | Tras 3 rechazos seguidos del broker, borra sus credenciales y abre el portal (el Wi-Fi se conserva) |
-| Cambió la IP de la PC | Volver a correr `pnpm certs:dev` en broker_api (nuevo certificado para la IP) y reconfigurar con BOOT |
 | Venía de un firmware sin cifrado | Al arrancar pasa solo los puertos guardados 3000/1883 a 3443/8883 y conserva la vinculación |
 
 ## Estructura

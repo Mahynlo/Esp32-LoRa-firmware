@@ -55,6 +55,22 @@ void clearCredentials() {
   prefs.end();
 }
 
+void requestPortal() {
+  Preferences prefs;
+  prefs.begin(NAMESPACE, false);
+  prefs.putBool("portal", true);
+  prefs.end();
+}
+
+bool takePortalRequest() {
+  Preferences prefs;
+  prefs.begin(NAMESPACE, false);
+  bool requested = prefs.getBool("portal", false);
+  if (requested) prefs.remove("portal");
+  prefs.end();
+  return requested;
+}
+
 void clearAll() {
   Preferences prefs;
   prefs.begin(NAMESPACE, false);

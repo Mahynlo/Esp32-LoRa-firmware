@@ -21,4 +21,8 @@ void save(const DeviceConfig& config);
 void clearCredentials();
 // Borra todo, incluida la red Wi-Fi (botón de reconfiguración)
 void clearAll();
+// Pide abrir el portal en el próximo arranque (BOOT 5 s con el equipo funcionando)
+void requestPortal();
+// ¿Se pidió abrir el portal? Lee y borra el pedido
+bool takePortalRequest();
 }
