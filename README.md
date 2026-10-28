@@ -1,6 +1,6 @@
 # esp32_lora — firmware del nodo
 
-Firmware del ESP32 que se conecta a **broker_api** por MQTT. Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor.
+Firmware del ESP32 que se conecta a **broker_api** por MQTTS. Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor. Versión actual: **0.2.0** (`FIRMWARE_VERSION`, se informa a la app como `fw`).
 
 - Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano). Se vuelve a abrir con **BOOT 5 s** para cambiar la red o la IP sin perder la vinculación.
 - **Todo cifrado**: canjea el código por HTTPS y se conecta por MQTTS, validando el certificado del servidor.
@@ -9,7 +9,8 @@ Firmware del ESP32 que se conecta a **broker_api** por MQTT. Hoy controla el LED
 - **Última voluntad** MQTT: si se corta la corriente, el broker avisa a la app en ~22 s.
 - Informa el **motivo del último reinicio** (corte de energía, caída de voltaje, watchdog…).
 - **Estado seguro**: el LED arranca siempre apagado.
-- Reconexión de Wi-Fi y MQTT con espera creciente (1 s → 30 s) y **watchdog** de 30 s.
+- Reconexión automática del Wi-Fi, reconexión MQTT con espera creciente (1 s → 30 s) y **watchdog** de 30 s.
+- Rechaza comandos repetidos, fuera de la lista blanca o de más de 30 s (esto último solo si tiene la hora por NTP, es decir, con internet).
 
 Protocolo (tópicos y mensajes): `broker_api/docs/MQTT.md`.
 
@@ -18,9 +19,10 @@ Protocolo (tópicos y mensajes): `broker_api/docs/MQTT.md`.
 Con la extensión de PlatformIO en VS Code (botones de la barra inferior) o en terminal:
 
 ```bash
-pio run                 # compilar
-pio run -t upload       # subir al ESP32 (USB)
-pio device monitor      # ver los logs (115200 baudios)
+pio run                       # compilar
+pio run -t upload             # subir al ESP32 (USB); cierra antes el monitor serie
+pio device monitor            # ver los logs (115200 baudios)
+pio run -t upload -t monitor  # subir y abrir el monitor al terminar
 ```
 
 Librerías (se descargan solas): PubSubClient, ArduinoJson, WiFiManager.
@@ -34,7 +36,7 @@ pnpm certs:dev --firmware <ruta de esta carpeta>
 
 No se versiona: depende de la CA de cada PC de desarrollo. Si cambia la IP de la PC, basta con volver a correr ese comando en broker_api; la CA es la misma y el firmware no se recompila. Cómo funciona, qué valida el ESP32 y qué hacer en cada caso: `broker_api/docs/CERTIFICADOS.md`.
 
-Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) manteniendo OTA.
+Tabla de particiones `min_spiffs.csv` (`board_build.partitions` en `platformio.ini`): 1,9 MB por app (el firmware ocupa ~54 %) manteniendo las dos particiones para OTA. La configuración guardada (NVS) está en el mismo lugar que con la tabla por defecto, así que cambiar de tabla no borra la vinculación.
 
 ## Primera configuración (vinculación)
 
@@ -45,7 +47,25 @@ Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) 
 5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja los puertos 3443 y 8883 y escribe el código.
 6. Al guardar, el ESP32 canjea el código, guarda su id y token y se reinicia. En la app aparece como **en línea**.
 
-En el monitor serie se ve cada paso (`[config]`, `[wifi]`, `[mqtt]`, `[cmd]`).
+En el monitor serie se ve cada paso. Un arranque normal se ve así:
+
+```
+[boot] Firmware 0.2.0
+[boot] Clave del portal de este equipo: K7QMX-2PARN (anótala en una etiqueta)
+[boot] Dispositivo 4ce6a204-…, servidor 192.168.100.7
+[wifi] Conectado, IP 192.168.100.23
+[mqtt] Conectando a 192.168.100.7:8883...
+[mqtt] Conectado
+[cmd] LED ENCENDIDO
+```
+
+| Prefijo | Qué informa |
+|---|---|
+| `[boot]` | Arranque, versión, clave del portal, botón BOOT |
+| `[config]` | Portal, canje del código, configuración guardada |
+| `[wifi]` | Conexión y desconexión de la red |
+| `[mqtt]` | Conexión con el broker, errores de TLS (`[mqtt] TLS: ...`) y credenciales rechazadas |
+| `[cmd]` | Comandos ejecutados, repetidos o rechazados |
 
 ## Reconfigurar (cambiar Wi-Fi o IP del servidor)
 
@@ -78,12 +98,27 @@ include/app_config.h   Pines, intervalos, puertos por defecto, clave del portal,
 include/ca_cert.h      CAs de confianza (generado por broker_api, no se versiona)
 src/
 ├── main.cpp           Arranque (portal o modo normal) y loop
-├── config_store.*     Configuración en la memoria no volátil (NVS)
-├── provisioning.*     Portal WiFiManager y canje del código por HTTPS (POST /api/devices/claim)
+├── config_store.*     NVS: servidor, puertos, id y token ("broker"); clave del portal ("device", no se borra); pedido de abrir el portal
+├── provisioning.*     Portal WiFiManager (conserva red y vinculación si ya estaba vinculado; se cierra tras 5 min sin uso) y canje del código por HTTPS
 ├── mqtt_link.*        Conexión MQTTS, última voluntad, reconexión, estado y ack
 ├── commands.*         Validación de comandos (lista blanca, repetidos, antigüedad)
 └── led.*              Salida controlada (después: motor)
 ```
+
+## Problemas comunes
+
+| Síntoma | Causa | Solución |
+|---|---|---|
+| Al subir: `Wrong boot mode detected (0x13)` o se queda en `Connecting......` | El monitor serie tiene el puerto abierto, o la placa no entró sola al modo de descarga | Cerrar el monitor (Ctrl+C) y volver a subir. Si sigue, mantener **BOOT** mientras dice `Connecting...` y soltarlo cuando empiece `Writing at...` |
+| Error al compilar: `ca_cert.h: No such file or directory` | Falta generar las CAs | `pnpm certs:dev --firmware <ruta de esta carpeta>` en broker_api |
+| `[mqtt] TLS: X509 - Certificate verification failed…` | La IP configurada no está en el certificado del servidor, o el firmware tiene otra CA | `pnpm certs:dev --host <IP>` en broker_api y reiniciar la API; si la CA cambió, recompilar y subir |
+| `[mqtt] Falló (estado -2)` sin línea `TLS:` | No llega al servidor: IP equivocada, firewall o API apagada | Revisar la IP (portal con BOOT 5 s), el firewall (8883) y que broker_api esté corriendo con TLS |
+| `[config] No se pudo conectar con el servidor (connection refused)` | Puerto API equivocado (p. ej. 3000) o HTTPS apagado | Puerto **3443** en el portal; `TLS_CERT_FILE` en el `.env` de broker_api |
+| `[config] El servidor rechazó el código (HTTP 400)` | Código vencido (10 min), ya usado o mal escrito | Generar otro en la app |
+| No conozco la clave del portal | Se perdió la etiqueta | Conectar por USB y abrir el monitor: aparece al arrancar |
+| BOOT 5 s no hace nada | El equipo está en el portal (ahí no se usa) o se soltó antes | Mirar el monitor: `BOOT soltado antes de tiempo` |
+
+Más casos de certificados: `broker_api/docs/CERTIFICADOS.md`.
 
 ## Seguridad
 

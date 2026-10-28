@@ -1,7 +1,7 @@
 #pragma once
 
 // Versión del firmware (se informa en devices/{id}/state como "fw")
-#define FIRMWARE_VERSION "0.1.0"
+#define FIRMWARE_VERSION "0.2.0"
 
 // Pin del LED controlado desde la app (después: salida del motor).
 // 2 = LED integrado (azul) de la ESP32 DevKit, para pruebas sin cablear nada.

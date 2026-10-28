@@ -2,7 +2,8 @@
 
 #include <Arduino.h>
 
-// Conexión con broker_api por MQTT. Protocolo: broker_api/docs/MQTT.md
+// Conexión con broker_api por MQTTS (TLS, validando el certificado del servidor con
+// CA_CERTS de include/ca_cert.h). Protocolo: broker_api/docs/MQTT.md
 namespace mqtt_link {
 
 struct Config {
