@@ -46,9 +46,10 @@ String apName() {
 
 void openPortal() {
   String name = apName();
-  Serial.printf("[config] Portal abierto: red \"%s\", clave \"%s\"\n", name.c_str(), CONFIG_AP_PASSWORD);
+  String password = config_store::portalPassword();
+  Serial.printf("[config] Portal abierto: red \"%s\", clave \"%s\"\n", name.c_str(), password.c_str());
   Serial.println("[config] Conéctate desde el teléfono y abre http://192.168.4.1");
-  wm.startConfigPortal(name.c_str(), CONFIG_AP_PASSWORD);
+  wm.startConfigPortal(name.c_str(), password.c_str());
 }
 
 // Canjea el código por id y token por HTTPS. Devuelve un mensaje de error o "" si salió bien.

@@ -32,7 +32,7 @@ Librerías (se descargan solas): PubSubClient, ArduinoJson, WiFiManager.
 pnpm certs:dev --firmware <ruta de esta carpeta>
 ```
 
-No se versiona: depende de la CA de cada PC de desarrollo. Si cambia la IP de la PC, basta con volver a correr ese comando en broker_api; la CA es la misma y el firmware no se recompila.
+No se versiona: depende de la CA de cada PC de desarrollo. Si cambia la IP de la PC, basta con volver a correr ese comando en broker_api; la CA es la misma y el firmware no se recompila. Cómo funciona, qué valida el ESP32 y qué hacer en cada caso: `broker_api/docs/CERTIFICADOS.md`.
 
 Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) manteniendo OTA.
 
@@ -40,7 +40,7 @@ Tabla de particiones `min_spiffs.csv`: 1,9 MB por app (el firmware ocupa ~54 %) 
 
 1. Arranca **broker_api** (`pnpm dev`, con TLS configurado) y la app. La PC y el ESP32 deben estar en la misma red, con los puertos **3443** (HTTPS) y **8883** (MQTTS) permitidos en el Firewall de Windows.
 2. En la app: **Dispositivos → Agregar** → nombre → **Obtener código** (vale 10 minutos).
-3. Enciende el ESP32. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`** (clave `lora1234`).
+3. Enciende el ESP32 con el monitor serie abierto. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`**. Su clave aparece en el monitor (`[boot] Clave del portal de este equipo: K7QMX-2PARN`): **anótala en una etiqueta pegada al equipo**, es la misma para siempre.
 4. Conéctate a esa red desde el teléfono. Se abre el portal (si no, entra a `http://192.168.4.1`) → **Configure WiFi**.
 5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja los puertos 3443 y 8883 y escribe el código.
 6. Al guardar, el ESP32 canjea el código, guarda su id y token y se reinicia. En la app aparece como **en línea**.
@@ -49,7 +49,7 @@ En el monitor serie se ve cada paso (`[config]`, `[wifi]`, `[mqtt]`, `[cmd]`).
 
 ## Reconfigurar (cambiar Wi-Fi o IP del servidor)
 
-Con el equipo **ya funcionando**, mantén presionado **BOOT 5 segundos**. Se reinicia en el portal: el LED parpadea lento y aparece la red `ESP32-LORA-XXXX` (clave `lora1234`). Mientras el portal está abierto, el equipo se ve desconectado en la app.
+Con el equipo **ya funcionando**, mantén presionado **BOOT 5 segundos**. Se reinicia en el portal: el LED parpadea lento y aparece la red `ESP32-LORA-XXXX` con la clave de la etiqueta. Mientras el portal está abierto, el equipo se ve desconectado en la app.
 
 En el portal (**Configure WiFi**) dice *"Este equipo ya está vinculado"*. Cambia solo lo que necesites:
 
@@ -87,7 +87,7 @@ src/
 
 ## Seguridad
 
-- Cambia `CONFIG_AP_PASSWORD` en `include/app_config.h`: mientras el portal está abierto, quien la conozca y esté cerca podría configurar el equipo.
+- **Clave del portal propia de cada equipo**: se genera al azar la primera vez y se guarda en la NVS en un espacio que no se borra ni con el reinicio de fábrica. Se ve en el monitor serie al arrancar; anótala en una etiqueta. Si se pierde, conecta el equipo por USB y mira el monitor. Definir `CONFIG_AP_PASSWORD` en `include/app_config.h` fija una clave común (solo para pruebas).
 - El token se guarda sin cifrar en la flash. Si el equipo se pierde, bórralo o rota su token desde la app: su conexión se corta al instante.
 - La conexión con broker_api va cifrada (HTTPS y MQTTS) y el ESP32 rechaza un servidor cuyo certificado no esté firmado por las CAs de `ca_cert.h`, antes de enviar el token. Si el log muestra `[mqtt] TLS: ...`, el certificado del servidor no corresponde a la IP configurada o a la CA del firmware.
 - No se revisa la fecha de vencimiento del certificado (el core no lo soporta); el del servidor de desarrollo dura 825 días.

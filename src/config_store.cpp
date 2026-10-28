@@ -2,11 +2,28 @@
 
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_random.h>
 
 #include "app_config.h"
 
 namespace {
 constexpr const char* NAMESPACE = "broker";
+// Datos propios del equipo que sobreviven al borrado de la configuración
+constexpr const char* DEVICE_NAMESPACE = "device";
+
+// Sin 0/O ni 1/I/L: se lee y se escribe sin confusiones desde una etiqueta
+constexpr const char* PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+// "K7QMX-2PARN": PORTAL_PASSWORD_LENGTH caracteres al azar, con un guion a la mitad
+String generatePassword() {
+  const size_t alphabetSize = strlen(PASSWORD_ALPHABET);
+  String password;
+  for (int i = 0; i < PORTAL_PASSWORD_LENGTH; i++) {
+    if (i == PORTAL_PASSWORD_LENGTH / 2) password += '-';
+    password += PASSWORD_ALPHABET[esp_random() % alphabetSize];
+  }
+  return password;
+}
 
 // Configuraciones guardadas antes del cifrado usaban los puertos sin TLS
 void migrate(Preferences& prefs) {
@@ -69,6 +86,22 @@ bool takePortalRequest() {
   if (requested) prefs.remove("portal");
   prefs.end();
   return requested;
+}
+
+String portalPassword() {
+#ifdef CONFIG_AP_PASSWORD
+  return CONFIG_AP_PASSWORD;
+#else
+  Preferences prefs;
+  prefs.begin(DEVICE_NAMESPACE, false);
+  String password = prefs.getString("portalPass", "");
+  if (password.length() < 8) {
+    password = generatePassword();
+    prefs.putString("portalPass", password);
+  }
+  prefs.end();
+  return password;
+#endif
 }
 
 void clearAll() {

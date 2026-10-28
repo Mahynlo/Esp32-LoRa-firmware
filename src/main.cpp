@@ -102,6 +102,10 @@ void setup() {
   config = config_store::load();
   WiFi.mode(WIFI_STA);
 
+  // Con el Wi-Fi iniciado, esp_random() usa el ruido de la radio: la clave es realmente al azar
+  Serial.printf("[boot] Clave del portal de este equipo: %s (anótala en una etiqueta)\n",
+                config_store::portalPassword().c_str());
+
   // Sin vincular, o se pidió con BOOT 5 s: portal de configuración
   if (!config.paired() || config_store::takePortalRequest()) {
     configuring = true;

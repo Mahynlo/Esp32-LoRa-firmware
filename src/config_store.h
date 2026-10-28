@@ -25,4 +25,7 @@ void clearAll();
 void requestPortal();
 // ¿Se pidió abrir el portal? Lee y borra el pedido
 bool takePortalRequest();
+// Clave de la red del portal: propia de cada equipo, se genera la primera vez y no se
+// borra nunca (tampoco con clearAll). Llamar con el Wi-Fi ya iniciado (azar de hardware).
+String portalPassword();
 }

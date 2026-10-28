@@ -38,9 +38,13 @@
 // guardada con los puertos sin cifrar (3000/1883) se pasa sola a 3443/8883.
 #define CONFIG_VERSION 2
 
-// Clave de la red "ESP32-LORA-XXXX" del portal (mínimo 8 caracteres).
-// Cámbiala: quien la conozca y esté cerca podría reconfigurar el equipo mientras el portal esté abierto.
-#define CONFIG_AP_PASSWORD "lora1234"
+// Clave de la red "ESP32-LORA-XXXX" del portal: cada equipo genera la suya al azar la
+// primera vez (p. ej. "K7QMX-2PARN") y la conserva siempre, incluso al borrar todo con
+// BOOT, para poder anotarla en una etiqueta. Se muestra en el monitor serie al arrancar.
+// Solo para pruebas: definir CONFIG_AP_PASSWORD (mínimo 8 caracteres) fija una clave
+// igual para todos los equipos, lo que permite configurar cualquiera conociéndola.
+// #define CONFIG_AP_PASSWORD "clave-de-pruebas"
+#define PORTAL_PASSWORD_LENGTH 10
 
 // Botón BOOT:
 //   - con el equipo funcionando, mantenerlo CONFIG_PORTAL_HOLD_MS abre el portal para
