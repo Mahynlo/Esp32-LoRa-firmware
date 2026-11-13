@@ -1,5 +1,10 @@
-// Firmware del nodo: LED controlado desde broker_api por MQTT.
-// Protocolo y tópicos: broker_api/docs/MQTT.md
+// Firmware del GATEWAY: se conecta a broker_api por MQTT (Wi-Fi) y controla el motor del
+// nodo por LoRa. El firmware del nodo está en src/nodo/. Compilar: pio run -e gateway
+// Protocolo con el servidor: broker_api/docs/MQTT.md. Con el nodo: docs/LORA.md
+//
+// Comando "motor" de la app → servidor → gateway (MQTT) → nodo (LoRa) → relé.
+// El ack al servidor se envía cuando el nodo confirma (o con el error si no responde).
+// El LED azul del gateway muestra el último estado confirmado del motor.
 //
 // Arranque:
 //   - Sin configurar: portal de configuración "ESP32-LORA-XXXX" para elegir Wi-Fi,
@@ -18,6 +23,7 @@
 #include "led.h"
 #include "mqtt_link.h"
 #include "provisioning.h"
+#include "remote_motor.h"
 
 namespace {
 DeviceConfig config;
@@ -87,7 +93,7 @@ void setup() {
   Serial.begin(115200);
   Serial.printf("\n[boot] Firmware %s\n", FIRMWARE_VERSION);
 
-  // Estado seguro: el LED arranca apagado siempre
+  // LED de estado apagado al arrancar (el motor lo controla el nodo)
   led::begin();
 
   // Watchdog: reinicia el ESP32 si el loop deja de ejecutarse
@@ -123,6 +129,9 @@ void setup() {
   Serial.printf("[boot] Dispositivo %s, servidor %s (%s)\n", config.deviceId.c_str(), config.host.c_str(),
                 config.useWebSocket() ? "WebSocket" : "TCP");
   mqtt_link::begin({config.mqttUri(), config.deviceId, config.token, onUnauthorized});
+
+  // Sin radio el gateway sigue conectado al servidor (para ver el error), pero los comandos fallan
+  remote_motor::begin();
 }
 
 void loop() {
@@ -137,6 +146,13 @@ void loop() {
   checkPortalButton();
   logWifiChanges();
   mqtt_link::loop();
+  remote_motor::loop();
+
+  // El motor o la conexión con el nodo cambiaron: avisar al servidor
+  if (remote_motor::takeChanged()) {
+    led::set(remote_motor::isOn());
+    mqtt_link::publishState();
+  }
 
   // Latido: estado cada HEARTBEAT_INTERVAL_MS aunque no cambie
   if (mqtt_link::connected() && millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {

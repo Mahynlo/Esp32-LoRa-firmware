@@ -1,15 +1,29 @@
-# esp32_lora — firmware del nodo
+# esp32_lora — gateway y nodo del motor
 
-Firmware del ESP32 que se conecta a **broker_api** por MQTT cifrado: **sobre WebSocket** (`wss://`, por defecto) o **por TCP** (`mqtts://`). Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor. Versión actual: **0.3.0** (`FIRMWARE_VERSION`, se informa a la app como `fw`).
+Un proyecto, **dos firmwares** para dos ESP32 con módulo LoRa (SX1262):
+
+| Firmware | Equipo | Qué hace |
+|---|---|---|
+| **gateway** (`pio run -e gateway`) | ESP32 + LoRa, donde hay Wi-Fi | Se conecta a **broker_api** por MQTT cifrado y reenvía el comando `motor` al nodo por LoRa |
+| **nodo** (`pio run -e nodo`) | ESP32 + LoRa + relé, junto al motor | Sin Wi-Fi: enciende/apaga el relé con las órdenes del gateway y las confirma |
+
+```
+App ──▶ broker_api ──MQTT (wss)──▶ GATEWAY ──LoRa cifrado──▶ NODO ──▶ relé ──▶ motor
+```
+
+Versión actual: **0.4.0** (`FIRMWARE_VERSION`; el gateway la informa a la app como `fw`). Cableado y pines: [docs/CABLEADO.md](docs/CABLEADO.md). Enlace LoRa (protocolo y seguridad): [docs/LORA.md](docs/LORA.md).
+
+El resto de este documento trata del **gateway** (la parte que habla con el servidor), salvo donde dice nodo. El gateway se conecta a broker_api **sobre WebSocket** (`wss://`, por defecto) o **por TCP** (`mqtts://`):
 
 - Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano). Se vuelve a abrir con **BOOT 5 s** para cambiar la red o la IP sin perder la vinculación.
 - **Todo cifrado**: canjea el código por HTTPS y se conecta por `wss://` o `mqtts://`, validando el certificado del servidor.
 - **Transporte a elegir en el portal**: WebSocket (`wss`, por el mismo puerto que la API: pasa por cualquier hosting con HTTPS) o TCP (`mqtts`, puerto 8883).
-- Enciende/apaga el LED con los comandos de la app y confirma cada uno (`ack`).
+- Enciende/apaga el motor del nodo por LoRa con los comandos de la app y confirma cada uno (`ack`) cuando el nodo lo confirma. Su LED azul muestra el estado del motor.
+- Enlace LoRa **cifrado y autenticado** (AES-128-GCM) y con reto contra la repetición: ver [docs/LORA.md](docs/LORA.md).
 - Informa su estado al conectar, al cambiar y cada 30 s (latido).
 - **Última voluntad** MQTT: si se corta la corriente, el broker avisa a la app en ~22 s.
 - Informa el **motivo del último reinicio** (corte de energía, caída de voltaje, watchdog…).
-- **Estado seguro**: el LED arranca siempre apagado.
+- **Estado seguro**: el relé del nodo arranca apagado y se apaga solo si el nodo pasa 3 min sin noticias del gateway.
 - Reconexión automática del Wi-Fi, reconexión MQTT con espera creciente (1 s → 30 s) y **watchdog** de 30 s.
 - Rechaza comandos repetidos, fuera de la lista blanca o de más de 30 s (esto último solo si tiene la hora por NTP, es decir, con internet).
 
@@ -20,15 +34,20 @@ Protocolo (tópicos y mensajes): `broker_api/docs/MQTT.md`.
 Con la extensión de PlatformIO en VS Code (botones de la barra inferior) o en terminal:
 
 ```bash
-pio run                       # compilar
-pio run -t upload             # subir al ESP32 (USB); cierra antes el monitor serie
-pio device monitor            # ver los logs (115200 baudios)
-pio run -t upload -t monitor  # subir y abrir el monitor al terminar
+pio run                                   # compilar los dos
+pio run -e gateway -t upload              # subir el gateway (USB); cierra antes el monitor serie
+pio run -e nodo -t upload                 # subir el nodo
+pio run -e nodo -t upload --upload-port COM6   # con los dos conectados, elegir el puerto
+pio device monitor                        # ver los logs (115200 baudios)
 ```
 
-Librerías (se descargan solas): ArduinoJson, WiFiManager. El cliente MQTT es el de ESP-IDF (`esp_mqtt_client`), que ya viene en el core de Arduino y soporta `wss://` y `mqtts://`.
+En VS Code, el entorno (gateway / nodo) se elige en la barra inferior de PlatformIO antes de subir.
 
-**Antes de compilar** hace falta `include/ca_cert.h` (las autoridades en las que confía el ESP32). Lo genera broker_api:
+**Clave LoRa:** la primera compilación crea `include/lora_key.h` (al azar, no se versiona). Los dos firmwares la usan: **sube gateway y nodo desde esta misma carpeta**. Si la borras, se genera otra y hay que subir los dos de nuevo.
+
+Librerías (se descargan solas): RadioLib (los dos), ArduinoJson y WiFiManager (gateway). El cliente MQTT es el de ESP-IDF (`esp_mqtt_client`), que ya viene en el core de Arduino y soporta `wss://` y `mqtts://`.
+
+**Antes de compilar el gateway** hace falta `include/ca_cert.h` (las autoridades en las que confía el ESP32). Lo genera broker_api:
 
 ```bash
 # en broker_api
@@ -37,13 +56,13 @@ pnpm certs:dev --firmware <ruta de esta carpeta>
 
 No se versiona: depende de la CA de cada PC de desarrollo. Si cambia la IP de la PC, basta con volver a correr ese comando en broker_api; la CA es la misma y el firmware no se recompila. Cómo funciona, qué valida el ESP32 y qué hacer en cada caso: `broker_api/docs/CERTIFICADOS.md`.
 
-Tabla de particiones `min_spiffs.csv` (`board_build.partitions` en `platformio.ini`): 1,9 MB por app (el firmware ocupa ~54 %) manteniendo las dos particiones para OTA. La configuración guardada (NVS) está en el mismo lugar que con la tabla por defecto, así que cambiar de tabla no borra la vinculación.
+Tabla de particiones del gateway `min_spiffs.csv` (`board_build.partitions` en `platformio.ini`): 1,9 MB por app (el firmware ocupa ~59 %) manteniendo las dos particiones para OTA. La configuración guardada (NVS) está en el mismo lugar que con la tabla por defecto, así que cambiar de tabla no borra la vinculación.
 
 ## Primera configuración (vinculación)
 
 1. Arranca **broker_api** (`pnpm dev`, con TLS configurado) y la app. La PC y el ESP32 deben estar en la misma red, con el puerto **3443** (HTTPS y WebSocket) permitido en el Firewall de Windows; también el **8883** si eliges TCP.
 2. En la app: **Dispositivos → Agregar** → nombre → **Obtener código** (vale 10 minutos).
-3. Enciende el ESP32 con el monitor serie abierto. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`**. Su clave aparece en el monitor (`[boot] Clave del portal de este equipo: K7QMX-2PARN`): **anótala en una etiqueta pegada al equipo**, es la misma para siempre.
+3. Enciende el **gateway** con el monitor serie abierto. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`**. Su clave aparece en el monitor (`[boot] Clave del portal de este equipo: K7QMX-2PARN`): **anótala en una etiqueta pegada al equipo**, es la misma para siempre.
 4. Conéctate a esa red desde el teléfono. Se abre el portal (si no, entra a `http://192.168.4.1`) → **Configure WiFi**.
 5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja **Conexión** en `wss` y los puertos 3443 y 8883, y escribe el código.
 6. Al guardar, el ESP32 canjea el código, guarda su id y token y se reinicia. En la app aparece como **en línea**.
@@ -51,13 +70,16 @@ Tabla de particiones `min_spiffs.csv` (`board_build.partitions` en `platformio.i
 En el monitor serie se ve cada paso. Un arranque normal se ve así:
 
 ```
-[boot] Firmware 0.3.0
+[boot] Firmware 0.4.0
 [boot] Clave del portal de este equipo: K7QMX-2PARN (anótala en una etiqueta)
 [boot] Dispositivo 4ce6a204-…, servidor 192.168.100.7 (WebSocket)
+[lora] Radio lista: 915.0 MHz, SF9, 10 dBm
+[lora] Nodo del motor conectado
 [wifi] Conectado, IP 192.168.100.23
 [mqtt] Conectando a wss://192.168.100.7:3443/mqtt...
 [mqtt] Conectado
-[cmd] LED ENCENDIDO
+[cmd] Motor: encender (enviando al nodo por LoRa)
+[cmd] Motor ENCENDIDO (confirmado por el nodo)
 ```
 
 | Prefijo | Qué informa |
@@ -67,6 +89,8 @@ En el monitor serie se ve cada paso. Un arranque normal se ve así:
 | `[wifi]` | Conexión y desconexión de la red |
 | `[mqtt]` | Conexión con el broker, errores de TLS (`[mqtt] TLS: ...`) o de red, reintentos y credenciales rechazadas |
 | `[cmd]` | Comandos ejecutados, repetidos o rechazados |
+| `[lora]` | Radio y conexión con el nodo |
+| `[motor]` | (nodo) Motor encendido/apagado, apagado por seguridad |
 
 ## Reconfigurar (cambiar Wi-Fi o IP del servidor)
 
@@ -98,16 +122,25 @@ Si cambias la IP del servidor, corre antes `pnpm certs:dev` en broker_api: el ce
 ## Estructura
 
 ```
-include/app_config.h   Pines, intervalos, puertos por defecto, clave del portal, versión
+include/pins.h         Pines (LoRa, relé, LED, BOOT), iguales en los dos equipos
+include/lora_config.h  Parámetros de radio y tiempos del enlace LoRa
+include/lora_key.h     Clave AES del enlace LoRa (generada, no se versiona)
+include/app_config.h   Intervalos, puertos por defecto, clave del portal, versión
 include/ca_cert.h      CAs de confianza (generado por broker_api, no se versiona)
+scripts/lora_key.py    Genera lora_key.h en la primera compilación
+docs/                  CABLEADO.md (hardware) y LORA.md (protocolo y seguridad)
 src/
+├── lora/              (los dos) Radio con tramas cifradas (secure_link) y mensajes (protocol.h)
+├── nodo/main.cpp      Firmware del NODO: relé, reto, apagado por seguridad
+│                      ── el resto es el GATEWAY ──
 ├── main.cpp           Arranque (portal o modo normal) y loop
+├── remote_motor.*     Motor del nodo por LoRa: comandos con reintentos y consulta cada 20 s
 ├── config_store.*     NVS: servidor, puertos, id y token ("broker"); clave del portal ("device", no se borra); pedido de abrir el portal
 ├── provisioning.*     Portal WiFiManager (conserva red y vinculación si ya estaba vinculado; se cierra tras 5 min sin uso) y canje del código por HTTPS
 ├── mqtt_link.*        Cliente MQTT de ESP-IDF (wss:// o mqtts://), última voluntad, reconexión, estado y ack.
 │                      Corre en su propia tarea; sus eventos pasan al loop por una cola
 ├── commands.*         Validación de comandos (lista blanca, repetidos, antigüedad)
-└── led.*              Salida controlada (después: motor)
+└── led.*              LED de estado (motor encendido, parpadeo en el portal)
 ```
 
 ## Problemas comunes
@@ -137,5 +170,4 @@ Más casos de certificados: `broker_api/docs/CERTIFICADOS.md`.
 ## Pendiente para el motor
 
 - Acciones con rangos (velocidad, rampas) validadas aquí **y** en la API, y límites físicos que ningún comando pueda superar.
-- Tiempo máximo sin conexión tras el cual el motor se detiene.
-- Espacio: con `min_spiffs.csv` quedan ~0,9 MB libres para LoRa y el motor; si no alcanza, `huge_app.csv` (3 MB, sin OTA).
+- Lo pendiente del enlace LoRa (botón local de paro, varios nodos, normativa): [docs/LORA.md](docs/LORA.md#pendiente).

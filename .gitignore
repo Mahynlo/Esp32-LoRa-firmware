@@ -10,3 +10,6 @@ include/secrets.h
 # CAs de confianza generadas por broker_api (pnpm certs:dev --firmware <esta carpeta>);
 # dependen de cada PC de desarrollo
 include/ca_cert.h
+
+# Clave del enlace LoRa (scripts/lora_key.py). SECRETA: controla el motor
+include/lora_key.h

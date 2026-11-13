@@ -10,7 +10,7 @@
 #include "app_config.h"
 #include "ca_cert.h"
 #include "commands.h"
-#include "led.h"
+#include "remote_motor.h"
 
 namespace {
 
@@ -67,7 +67,8 @@ void publishAck(const CommandResult& result) {
   doc["id"] = result.id;
   doc["ok"] = result.ok;
   if (!result.ok) doc["error"] = result.error;
-  doc["state"]["led"] = led::isOn();
+  if (remote_motor::known()) doc["state"]["motor"] = remote_motor::isOn();
+  doc["state"]["nodeOnline"] = remote_motor::nodeOnline();
 
   char buffer[256];
   size_t n = serializeJson(doc, buffer);
@@ -246,7 +247,13 @@ bool connected() { return isConnected; }
 
 void publishState() {
   JsonDocument doc;
-  doc["led"] = led::isOn();
+  // motor: último estado confirmado por el nodo (no va hasta que responda la primera vez)
+  if (remote_motor::known()) doc["motor"] = remote_motor::isOn();
+  doc["nodeOnline"] = remote_motor::nodeOnline();
+  if (remote_motor::nodeOnline()) {
+    doc["loraRssi"] = remote_motor::linkRssi();
+    doc["loraSnr"] = roundf(remote_motor::linkSnr() * 10) / 10;
+  }
   doc["uptime"] = millis() / 1000;
   doc["rssi"] = WiFi.RSSI();
   doc["fw"] = FIRMWARE_VERSION;

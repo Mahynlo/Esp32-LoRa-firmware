@@ -4,7 +4,7 @@
 #include <time.h>
 
 #include "app_config.h"
-#include "led.h"
+#include "remote_motor.h"
 
 namespace {
 
@@ -66,10 +66,15 @@ CommandResult handle(const uint8_t* payload, unsigned int length) {
 
   // Lista blanca
   const char* action = doc["action"] | "";
-  if (strcmp(action, "led") == 0 && doc["value"].is<bool>()) {
+  if (strcmp(action, "motor") == 0 && doc["value"].is<bool>()) {
     bool on = doc["value"];
-    led::set(on);
-    Serial.printf("[cmd] LED %s\n", on ? "ENCENDIDO" : "apagado");
+    Serial.printf("[cmd] Motor: %s (enviando al nodo por LoRa)\n", on ? "encender" : "apagar");
+    remote_motor::Result result = remote_motor::set(on);
+    if (!result.ok) {
+      Serial.printf("[cmd] Motor: %s\n", result.error);
+      return fail(id, result.error);
+    }
+    Serial.printf("[cmd] Motor %s (confirmado por el nodo)\n", on ? "ENCENDIDO" : "apagado");
     return {true, id, true, ""};
   }
 

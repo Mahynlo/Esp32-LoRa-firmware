@@ -1,11 +1,12 @@
 #pragma once
 
-// Versión del firmware (se informa en devices/{id}/state como "fw")
-#define FIRMWARE_VERSION "0.3.0"
+#include "pins.h"
 
-// Pin del LED controlado desde la app (después: salida del motor).
-// 2 = LED integrado (azul) de la ESP32 DevKit, para pruebas sin cablear nada.
-#define LED_PIN 2
+// Versión del firmware (gateway y nodo). El gateway la informa en devices/{id}/state como "fw"
+#define FIRMWARE_VERSION "0.4.0"
+
+// LED azul de la placa. Gateway: muestra el estado confirmado del motor y parpadea en el portal
+#define LED_PIN STATUS_LED_PIN
 
 // MQTT
 #define MQTT_KEEPALIVE_S 15          // el broker detecta un corte en ~1,5 × keepalive (~22 s)
