@@ -85,6 +85,8 @@ Al presionar **Save** guarda y se reinicia. Con el código vacío sigue siendo *
 
 Si cambias la IP del servidor, corre antes `pnpm certs:dev` en broker_api: el certificado tiene que incluir la IP nueva. La CA no cambia, así que el firmware no se recompila.
 
+**Servidor en Render** (prueba en internet): Servidor `<servicio>.onrender.com` (sin `https://`), Conexión `wss`, Puerto API `443`. El certificado de `onrender.com` es de Google Trust Services: el `ca_cert.h` generado por `pnpm certs:dev` ya incluye sus raíces (si tu firmware es anterior, regenéralo y súbelo). Guía completa en `broker_api/docs/DESPLIEGUE.md`.
+
 ### Otras situaciones
 
 | Situación | Qué pasa |

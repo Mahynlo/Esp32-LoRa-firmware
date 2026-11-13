@@ -21,11 +21,11 @@ char hostBuf[64];
 char transportBuf[8];
 char apiPortBuf[6];
 char mqttPortBuf[6];
-WiFiManagerParameter paramHost("host", "Servidor (IP o dominio de broker_api)", "", sizeof(hostBuf) - 1);
+WiFiManagerParameter paramHost("host", "Servidor: IP o dominio, sin https:// (p. ej. mi-api.onrender.com)", "", sizeof(hostBuf) - 1);
 WiFiManagerParameter paramTransport(
     "transport", "Conexión: <b>wss</b> (WebSocket, por el puerto API) o <b>mqtts</b> (TCP)", "",
     sizeof(transportBuf) - 1);
-WiFiManagerParameter paramApiPort("apiPort", "Puerto API (HTTPS; también WebSocket)", "", sizeof(apiPortBuf) - 1);
+WiFiManagerParameter paramApiPort("apiPort", "Puerto API: 443 en Render o con dominio; 3443 en la red local", "", sizeof(apiPortBuf) - 1);
 WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTTS (solo con mqtts)", "", sizeof(mqttPortBuf) - 1);
 WiFiManagerParameter paramCode("code", "Código de vinculación (lo muestra la app)", "", 12);
 
@@ -115,9 +115,19 @@ String transportOr(const char* value, const String& fallback) {
   return fallback;
 }
 
-void onSaveParams() {
-  String host = paramHost.getValue();
+// Solo el nombre o la IP: quita "https://", "wss://"… y lo que siga a "/" si se pegó una URL
+String hostOnly(const char* value) {
+  String host = value;
   host.trim();
+  int scheme = host.indexOf("://");
+  if (scheme >= 0) host = host.substring(scheme + 3);
+  int slash = host.indexOf('/');
+  if (slash >= 0) host = host.substring(0, slash);
+  return host;
+}
+
+void onSaveParams() {
+  String host = hostOnly(paramHost.getValue());
   if (host.length() > 0) config.host = host;
   config.transport = transportOr(paramTransport.getValue(), config.transport);
   config.apiPort = portOr(paramApiPort.getValue(), config.apiPort);
