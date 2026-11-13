@@ -7,7 +7,7 @@
 #include <WiFiManager.h>
 #include <esp_task_wdt.h>
 
-#include "app_config.h"
+#include "gateway_config.h"
 #include "ca_cert.h"
 #include "led.h"
 

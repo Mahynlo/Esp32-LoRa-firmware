@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <esp_random.h>
 
-#include "app_config.h"
+#include "gateway_config.h"
 
 namespace {
 constexpr const char* NAMESPACE = "broker";

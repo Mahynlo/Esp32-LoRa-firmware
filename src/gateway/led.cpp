@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#include "app_config.h"
+#include "pins.h"
 
 namespace {
 bool state = false;
@@ -11,13 +11,13 @@ bool state = false;
 namespace led {
 
 void begin() {
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
   set(false);
 }
 
 void set(bool on) {
   state = on;
-  digitalWrite(LED_PIN, on ? HIGH : LOW);
+  digitalWrite(STATUS_LED_PIN, on ? HIGH : LOW);
 }
 
 bool isOn() { return state; }

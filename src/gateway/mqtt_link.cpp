@@ -1,21 +1,17 @@
 #include "mqtt_link.h"
 
-#include <ArduinoJson.h>
 #include <WiFi.h>
-#include <esp_system.h>
 #include <freertos/queue.h>
 #include <mbedtls/error.h>
 #include <mqtt_client.h>
 
-#include "app_config.h"
 #include "ca_cert.h"
-#include "commands.h"
-#include "remote_motor.h"
+#include "gateway_config.h"
 
 namespace {
 
 // El cliente MQTT de ESP-IDF corre en su propia tarea. Sus eventos se copian a esta
-// cola y se atienden en el loop: comandos, LED y estado se manejan en un solo hilo.
+// cola y se atienden en el loop: comandos, radio LoRa y estado se manejan en un solo hilo.
 enum class EventType : uint8_t { Connected, Disconnected, AuthRejected, TransportError, Command };
 
 struct Event {
@@ -39,40 +35,11 @@ bool started = false;
 bool waitingReconnect = false;
 unsigned long reconnectDelay = 1000;
 unsigned long nextAttemptAt = 0;
-bool firstStateSent = false;
 int authFailures = 0;
-
-const char* resetReason() {
-  switch (esp_reset_reason()) {
-    case ESP_RST_POWERON: return "POWERON";      // se encendió (o volvió la corriente)
-    case ESP_RST_BROWNOUT: return "BROWNOUT";    // caída de voltaje
-    case ESP_RST_TASK_WDT:
-    case ESP_RST_INT_WDT:
-    case ESP_RST_WDT: return "WATCHDOG";         // el firmware se congeló
-    case ESP_RST_PANIC: return "PANIC";          // error del firmware
-    case ESP_RST_SW: return "SOFTWARE";          // reinicio pedido por el firmware
-    case ESP_RST_EXT: return "EXTERNAL";         // botón EN / reset
-    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
-    default: return "UNKNOWN";
-  }
-}
 
 bool publish(const String& topic, const char* data, size_t length, int qos) {
   if (!isConnected) return false;
   return esp_mqtt_client_publish(client, topic.c_str(), data, static_cast<int>(length), qos, 0) >= 0;
-}
-
-void publishAck(const CommandResult& result) {
-  JsonDocument doc;
-  doc["id"] = result.id;
-  doc["ok"] = result.ok;
-  if (!result.ok) doc["error"] = result.error;
-  if (remote_motor::known()) doc["state"]["motor"] = remote_motor::isOn();
-  doc["state"]["nodeOnline"] = remote_motor::nodeOnline();
-
-  char buffer[256];
-  size_t n = serializeJson(doc, buffer);
-  publish(topicAck, buffer, n, 1);
 }
 
 // ── Tarea MQTT: solo copia lo necesario a la cola ──────────────────────────
@@ -154,7 +121,7 @@ void handleEvent(const Event& event) {
       Serial.println("[mqtt] Conectado");
       esp_mqtt_client_subscribe(client, topicCommands.c_str(), 1);
       publish(topicStatus, "online", 6, 1);
-      mqtt_link::publishState();
+      if (cfg.onConnected) cfg.onConnected();
       break;
 
     case EventType::Disconnected:
@@ -179,13 +146,9 @@ void handleEvent(const Event& event) {
       }
       break;
 
-    case EventType::Command: {
-      CommandResult result = commands::handle(reinterpret_cast<const uint8_t*>(event.data), event.length);
-      if (!result.reply) break;
-      publishAck(result);
-      if (result.ok) mqtt_link::publishState();
+    case EventType::Command:
+      if (cfg.onCommand) cfg.onCommand(reinterpret_cast<const uint8_t*>(event.data), event.length);
       break;
-    }
   }
 }
 
@@ -245,24 +208,8 @@ void loop() {
 
 bool connected() { return isConnected; }
 
-void publishState() {
-  JsonDocument doc;
-  // motor: último estado confirmado por el nodo (no va hasta que responda la primera vez)
-  if (remote_motor::known()) doc["motor"] = remote_motor::isOn();
-  doc["nodeOnline"] = remote_motor::nodeOnline();
-  if (remote_motor::nodeOnline()) {
-    doc["loraRssi"] = remote_motor::linkRssi();
-    doc["loraSnr"] = roundf(remote_motor::linkSnr() * 10) / 10;
-  }
-  doc["uptime"] = millis() / 1000;
-  doc["rssi"] = WiFi.RSSI();
-  doc["fw"] = FIRMWARE_VERSION;
-  // El motivo del reinicio solo en el primer estado tras arrancar
-  if (!firstStateSent) doc["reset"] = resetReason();
+bool publishState(const char* json, size_t length) { return publish(topicState, json, length, 0); }
 
-  char buffer[256];
-  size_t n = serializeJson(doc, buffer);
-  if (publish(topicState, buffer, n, 0)) firstStateSent = true;
-}
+bool publishAck(const char* json, size_t length) { return publish(topicAck, json, length, 1); }
 
 }  // namespace mqtt_link

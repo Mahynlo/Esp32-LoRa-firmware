@@ -1,10 +1,20 @@
 // Firmware del GATEWAY: se conecta a broker_api por MQTT (Wi-Fi) y controla el motor del
 // nodo por LoRa. El firmware del nodo está en src/nodo/. Compilar: pio run -e gateway
 // Protocolo con el servidor: broker_api/docs/MQTT.md. Con el nodo: docs/LORA.md
+// Cómo encajan los módulos (con diagramas): docs/ARQUITECTURA.md
 //
 // Comando "motor" de la app → servidor → gateway (MQTT) → nodo (LoRa) → relé.
 // El ack al servidor se envía cuando el nodo confirma (o con el error si no responde).
 // El LED azul del gateway muestra el último estado confirmado del motor.
+//
+// Este archivo une los módulos; cada uno hace una sola cosa:
+//   config_store   configuración guardada (NVS)
+//   provisioning   portal de configuración y vinculación
+//   mqtt_link      conexión con el servidor (solo transporte)
+//   commands       valida y ejecuta los comandos que llegan
+//   remote_motor   motor del nodo por LoRa
+//   report         estado y ack que se publican al servidor
+//   led            LED de estado
 //
 // Arranque:
 //   - Sin configurar: portal de configuración "ESP32-LORA-XXXX" para elegir Wi-Fi,
@@ -18,12 +28,14 @@
 #include <esp_task_wdt.h>
 #include <time.h>
 
-#include "app_config.h"
+#include "commands.h"
 #include "config_store.h"
+#include "gateway_config.h"
 #include "led.h"
 #include "mqtt_link.h"
 #include "provisioning.h"
 #include "remote_motor.h"
+#include "report.h"
 
 namespace {
 DeviceConfig config;
@@ -44,11 +56,11 @@ void logWifiChanges() {
 
 // ¿BOOT presionado durante CONFIG_BUTTON_HOLD_MS al encender?
 bool configButtonHeld() {
-  pinMode(CONFIG_BUTTON_PIN, INPUT_PULLUP);
-  if (digitalRead(CONFIG_BUTTON_PIN) != LOW) return false;
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  if (digitalRead(BOOT_BUTTON_PIN) != LOW) return false;
   Serial.println("[boot] BOOT presionado: mantenlo para borrar la configuración...");
   unsigned long start = millis();
-  while (digitalRead(CONFIG_BUTTON_PIN) == LOW) {
+  while (digitalRead(BOOT_BUTTON_PIN) == LOW) {
     if (millis() - start >= CONFIG_BUTTON_HOLD_MS) return true;
     delay(20);
   }
@@ -60,7 +72,7 @@ bool configButtonHeld() {
 void checkPortalButton() {
   static unsigned long pressedSince = 0;
   static bool pressed = false;
-  if (digitalRead(CONFIG_BUTTON_PIN) != LOW) {
+  if (digitalRead(BOOT_BUTTON_PIN) != LOW) {
     if (pressed) Serial.println("[boot] BOOT soltado antes de tiempo: no se abre el portal");
     pressed = false;
     return;
@@ -79,6 +91,14 @@ void checkPortalButton() {
   led::set(false);
   delay(200);
   ESP.restart();
+}
+
+// Llegó un comando del servidor: validarlo, ejecutarlo y responder con el ack
+void onCommand(const uint8_t* payload, size_t length) {
+  CommandResult result = commands::handle(payload, length);
+  if (!result.reply) return;
+  report::publishAck(result);
+  if (result.ok) report::publishState();
 }
 
 // El broker rechazó las credenciales varias veces: el dispositivo ya no existe en la app
@@ -128,7 +148,7 @@ void setup() {
 
   Serial.printf("[boot] Dispositivo %s, servidor %s (%s)\n", config.deviceId.c_str(), config.host.c_str(),
                 config.useWebSocket() ? "WebSocket" : "TCP");
-  mqtt_link::begin({config.mqttUri(), config.deviceId, config.token, onUnauthorized});
+  mqtt_link::begin({config.mqttUri(), config.deviceId, config.token, report::publishState, onCommand, onUnauthorized});
 
   // Sin radio el gateway sigue conectado al servidor (para ver el error), pero los comandos fallan
   remote_motor::begin();
@@ -151,13 +171,13 @@ void loop() {
   // El motor o la conexión con el nodo cambiaron: avisar al servidor
   if (remote_motor::takeChanged()) {
     led::set(remote_motor::isOn());
-    mqtt_link::publishState();
+    report::publishState();
   }
 
   // Latido: estado cada HEARTBEAT_INTERVAL_MS aunque no cambie
   if (mqtt_link::connected() && millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = millis();
-    mqtt_link::publishState();
+    report::publishState();
   }
 
   delay(10);

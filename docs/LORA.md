@@ -8,7 +8,7 @@ App ──HTTPS──▶ broker_api ──MQTT (wss)──▶ GATEWAY ──LoRa
 - **Gateway** (`pio run -e gateway`): el ESP32 con Wi-Fi. Es el "dispositivo" que se vincula en la app. Recibe el comando `motor` por MQTT, lo envía al nodo y responde el `ack` al servidor cuando el nodo lo confirma.
 - **Nodo** (`pio run -e nodo`): el ESP32 junto al motor, con el relé. Sin Wi-Fi: solo escucha al gateway por LoRa.
 
-Parámetros de radio: `include/lora_config.h`. Pines y cableado: [CABLEADO.md](CABLEADO.md).
+Parámetros de radio: `include/lora_config.h`. Pines y cableado: [CABLEADO.md](CABLEADO.md). Código del enlace: `src/lora/` (compartido), `src/gateway/remote_motor.cpp` y `src/nodo/main.cpp`; cómo encajan, en [ARQUITECTURA.md](ARQUITECTURA.md#6-enlace-lora-compartido).
 
 ## Qué ve la app
 

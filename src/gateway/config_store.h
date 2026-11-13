@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#include "app_config.h"
+#include "gateway_config.h"
 
 // Configuración persistente en la memoria no volátil (NVS) del ESP32.
 // La red Wi-Fi la guarda el propio ESP32 (WiFiManager); aquí va lo de broker_api.

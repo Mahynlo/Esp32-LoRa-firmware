@@ -12,5 +12,5 @@ struct CommandResult {
 
 namespace commands {
 // Valida (lista blanca, repetido, antigüedad) y ejecuta el comando.
-CommandResult handle(const uint8_t* payload, unsigned int length);
+CommandResult handle(const uint8_t* payload, size_t length);
 }

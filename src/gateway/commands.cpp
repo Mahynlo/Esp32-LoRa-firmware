@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-#include "app_config.h"
+#include "gateway_config.h"
 #include "remote_motor.h"
 
 namespace {
@@ -40,7 +40,7 @@ CommandResult fail(const String& id, const char* error) {
 
 namespace commands {
 
-CommandResult handle(const uint8_t* payload, unsigned int length) {
+CommandResult handle(const uint8_t* payload, size_t length) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, length)) {
     Serial.println("[cmd] JSON inválido, ignorado");

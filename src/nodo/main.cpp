@@ -12,7 +12,7 @@
 #include <bootloader_random.h>
 #include <esp_task_wdt.h>
 
-#include "app_config.h"
+#include "common_config.h"
 #include "lora/protocol.h"
 #include "lora/secure_link.h"
 #include "lora_config.h"

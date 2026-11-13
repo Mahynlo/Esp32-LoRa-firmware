@@ -18,6 +18,7 @@
 // Relé del motor: In1 del HL-52S (solo en el nodo). Activo en bajo.
 #define RELAY_PIN 16
 
-// LED azul de la placa y botón BOOT
+// LED azul de la placa. Gateway: estado confirmado del motor y parpadeo en el portal.
+// Nodo: motor encendido. Botón BOOT: solo lo usa el gateway (gateway_config.h)
 #define STATUS_LED_PIN 2
 #define BOOT_BUTTON_PIN 0
