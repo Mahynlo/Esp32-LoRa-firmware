@@ -1,10 +1,11 @@
 #include "mqtt_link.h"
 
 #include <ArduinoJson.h>
-#include <PubSubClient.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <esp_system.h>
+#include <freertos/queue.h>
+#include <mbedtls/error.h>
+#include <mqtt_client.h>
 
 #include "app_config.h"
 #include "ca_cert.h"
@@ -13,13 +14,29 @@
 
 namespace {
 
-// MQTTS: el certificado del servidor se valida con CA_CERTS antes de enviar el token
-WiFiClientSecure net;
-PubSubClient client(net);
+// El cliente MQTT de ESP-IDF corre en su propia tarea. Sus eventos se copian a esta
+// cola y se atienden en el loop: comandos, LED y estado se manejan en un solo hilo.
+enum class EventType : uint8_t { Connected, Disconnected, AuthRejected, TransportError, Command };
+
+struct Event {
+  EventType type;
+  int tlsError;      // TransportError: código de mbedTLS (0 si no fue TLS)
+  int socketErrno;   // TransportError: errno del socket
+  uint16_t length;   // Command: bytes en data
+  char data[MQTT_BUFFER_SIZE];
+};
+
+constexpr int EVENT_QUEUE_LENGTH = 4;
+
+esp_mqtt_client_handle_t client = nullptr;
+QueueHandle_t events = nullptr;
+volatile bool isConnected = false;
 mqtt_link::Config cfg;
 
 String topicCommands, topicState, topicAck, topicStatus;
 
+bool started = false;
+bool waitingReconnect = false;
 unsigned long reconnectDelay = 1000;
 unsigned long nextAttemptAt = 0;
 bool firstStateSent = false;
@@ -40,6 +57,11 @@ const char* resetReason() {
   }
 }
 
+bool publish(const String& topic, const char* data, size_t length, int qos) {
+  if (!isConnected) return false;
+  return esp_mqtt_client_publish(client, topic.c_str(), data, static_cast<int>(length), qos, 0) >= 0;
+}
+
 void publishAck(const CommandResult& result) {
   JsonDocument doc;
   doc["id"] = result.id;
@@ -49,43 +71,121 @@ void publishAck(const CommandResult& result) {
 
   char buffer[256];
   size_t n = serializeJson(doc, buffer);
-  client.publish(topicAck.c_str(), reinterpret_cast<const uint8_t*>(buffer), n, false);
+  publish(topicAck, buffer, n, 1);
 }
 
-void onMessage(char* topic, uint8_t* payload, unsigned int length) {
-  if (topicCommands != topic) return;
-  CommandResult result = commands::handle(payload, length);
-  if (!result.reply) return;
-  publishAck(result);
-  if (result.ok) mqtt_link::publishState();
+// ── Tarea MQTT: solo copia lo necesario a la cola ──────────────────────────
+
+void queueEvent(const Event& event) {
+  // Cola llena: se descarta (un comando perdido no recibe ack y la app marca "sin respuesta")
+  xQueueSend(events, &event, 0);
 }
 
-bool connectNow() {
-  Serial.printf("[mqtt] Conectando a %s:%u...\n", cfg.host.c_str(), cfg.port);
-  // Última voluntad: si se corta la corriente, el broker publica "offline" por nosotros
-  bool ok = client.connect(cfg.deviceId.c_str(), cfg.deviceId.c_str(), cfg.token.c_str(),
-                           topicStatus.c_str(), 1, false, "offline", true);
-  if (!ok) {
-    int state = client.state();
-    Serial.printf("[mqtt] Falló (estado %d)\n", state);
-    // -2 = sin conexión: puede ser TLS (certificado no válido para este servidor)
-    char tlsError[100];
-    if (net.lastError(tlsError, sizeof(tlsError)) != 0) Serial.printf("[mqtt] TLS: %s\n", tlsError);
-    // 4 = credenciales incorrectas, 5 = no autorizado: el dispositivo se borró o su token se rotó
-    if (state == MQTT_CONNECT_BAD_CREDENTIALS || state == MQTT_CONNECT_UNAUTHORIZED) {
-      if (++authFailures >= MAX_AUTH_FAILURES && cfg.onUnauthorized) cfg.onUnauthorized();
-    } else {
-      authFailures = 0;
+void onMqttEvent(void*, esp_event_base_t, int32_t eventId, void* eventData) {
+  auto* data = static_cast<esp_mqtt_event_handle_t>(eventData);
+  Event event{};
+
+  switch (static_cast<esp_mqtt_event_id_t>(eventId)) {
+    case MQTT_EVENT_CONNECTED:
+      isConnected = true;
+      event.type = EventType::Connected;
+      queueEvent(event);
+      break;
+
+    case MQTT_EVENT_DISCONNECTED:
+      isConnected = false;
+      event.type = EventType::Disconnected;
+      queueEvent(event);
+      break;
+
+    case MQTT_EVENT_ERROR: {
+      const esp_mqtt_error_codes_t* error = data->error_handle;
+      if (error->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+        // 4 = usuario incorrecto, 5 = no autorizado: el dispositivo se borró o su token se rotó
+        auto code = error->connect_return_code;
+        if (code == MQTT_CONNECTION_REFUSE_BAD_USERNAME || code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
+          event.type = EventType::AuthRejected;
+          queueEvent(event);
+        }
+      } else if (error->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+        event.type = EventType::TransportError;
+        event.tlsError = error->esp_tls_stack_err;
+        event.socketErrno = error->esp_transport_sock_errno;
+        queueEvent(event);
+      }
+      break;
     }
-    return false;
-  }
 
-  authFailures = 0;
-  Serial.println("[mqtt] Conectado");
-  client.subscribe(topicCommands.c_str(), 1);
-  client.publish(topicStatus.c_str(), "online", false);
-  mqtt_link::publishState();
-  return true;
+    case MQTT_EVENT_DATA:
+      // Un comando llega completo en un solo evento (son de pocos bytes)
+      if (data->current_data_offset != 0 || data->data_len != data->total_data_len) break;
+      if (data->data_len <= 0 || data->data_len >= static_cast<int>(sizeof(event.data))) break;
+      if (topicCommands.length() != static_cast<unsigned>(data->topic_len) ||
+          strncmp(topicCommands.c_str(), data->topic, data->topic_len) != 0) {
+        break;
+      }
+      event.type = EventType::Command;
+      event.length = static_cast<uint16_t>(data->data_len);
+      memcpy(event.data, data->data, data->data_len);
+      queueEvent(event);
+      break;
+
+    default:
+      break;
+  }
+}
+
+// ── Loop: atiende los eventos ──────────────────────────────────────────────
+
+void scheduleReconnect() {
+  waitingReconnect = true;
+  nextAttemptAt = millis() + reconnectDelay;
+  Serial.printf("[mqtt] Reintento en %lu s\n", reconnectDelay / 1000);
+  reconnectDelay = min(reconnectDelay * 2, static_cast<unsigned long>(RECONNECT_MAX_DELAY_MS));
+}
+
+void handleEvent(const Event& event) {
+  switch (event.type) {
+    case EventType::Connected:
+      authFailures = 0;
+      reconnectDelay = 1000;
+      waitingReconnect = false;
+      Serial.println("[mqtt] Conectado");
+      esp_mqtt_client_subscribe(client, topicCommands.c_str(), 1);
+      publish(topicStatus, "online", 6, 1);
+      mqtt_link::publishState();
+      break;
+
+    case EventType::Disconnected:
+      Serial.println("[mqtt] Desconectado");
+      scheduleReconnect();
+      break;
+
+    case EventType::AuthRejected:
+      Serial.println("[mqtt] El broker rechazó las credenciales");
+      if (++authFailures >= MAX_AUTH_FAILURES && cfg.onUnauthorized) cfg.onUnauthorized();
+      break;
+
+    case EventType::TransportError:
+      // Fallo de red o de TLS: no es un rechazo de credenciales, se reintenta sin borrar nada
+      authFailures = 0;
+      if (event.tlsError != 0) {
+        char text[100];
+        mbedtls_strerror(event.tlsError, text, sizeof(text));
+        Serial.printf("[mqtt] TLS: %s\n", text);
+      } else {
+        Serial.printf("[mqtt] Sin conexión con el servidor (errno %d)\n", event.socketErrno);
+      }
+      break;
+
+    case EventType::Command: {
+      CommandResult result = commands::handle(reinterpret_cast<const uint8_t*>(event.data), event.length);
+      if (!result.reply) break;
+      publishAck(result);
+      if (result.ok) mqtt_link::publishState();
+      break;
+    }
+  }
 }
 
 }  // namespace
@@ -100,38 +200,51 @@ void begin(const Config& config) {
   topicAck = base + "ack";
   topicStatus = base + "status";
 
-  net.setCACert(CA_CERTS);
-  net.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
+  events = xQueueCreate(EVENT_QUEUE_LENGTH, sizeof(Event));
 
-  // PubSubClient guarda el puntero: cfg es una copia que vive todo el programa
-  client.setServer(cfg.host.c_str(), cfg.port);
-  client.setKeepAlive(MQTT_KEEPALIVE_S);
-  client.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
-  client.setBufferSize(MQTT_BUFFER_SIZE);
-  client.setCallback(onMessage);
+  // El cliente copia URI, usuario, contraseña y última voluntad; CA_CERTS es estático
+  esp_mqtt_client_config_t mqttConfig = {};
+  mqttConfig.uri = cfg.uri.c_str();
+  mqttConfig.client_id = cfg.deviceId.c_str();
+  mqttConfig.username = cfg.deviceId.c_str();
+  mqttConfig.password = cfg.token.c_str();
+  mqttConfig.cert_pem = CA_CERTS;              // valida el certificado del servidor
+  mqttConfig.keepalive = MQTT_KEEPALIVE_S;
+  mqttConfig.network_timeout_ms = TLS_HANDSHAKE_TIMEOUT_S * 1000;
+  mqttConfig.buffer_size = MQTT_BUFFER_SIZE;
+  mqttConfig.disable_auto_reconnect = true;    // la espera creciente la maneja loop()
+  // Última voluntad: si se corta la corriente, el broker publica "offline" por nosotros
+  mqttConfig.lwt_topic = topicStatus.c_str();
+  mqttConfig.lwt_msg = "offline";
+  mqttConfig.lwt_qos = 1;
+  mqttConfig.lwt_retain = 0;
+
+  client = esp_mqtt_client_init(&mqttConfig);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, onMqttEvent, nullptr);
 }
 
 void loop() {
-  if (client.connected()) {
-    client.loop();
-    return;
+  // Primera conexión: en cuanto haya Wi-Fi
+  if (!started) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    Serial.printf("[mqtt] Conectando a %s...\n", cfg.uri.c_str());
+    esp_mqtt_client_start(client);
+    started = true;
   }
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (millis() < nextAttemptAt) return;
 
-  if (connectNow()) {
-    reconnectDelay = 1000;
-  } else {
-    nextAttemptAt = millis() + reconnectDelay;
-    reconnectDelay = min(reconnectDelay * 2, static_cast<unsigned long>(RECONNECT_MAX_DELAY_MS));
+  Event event;
+  while (xQueueReceive(events, &event, 0) == pdTRUE) handleEvent(event);
+
+  if (waitingReconnect && WiFi.status() == WL_CONNECTED && millis() >= nextAttemptAt) {
+    waitingReconnect = false;
+    Serial.printf("[mqtt] Conectando a %s...\n", cfg.uri.c_str());
+    esp_mqtt_client_reconnect(client);
   }
 }
 
-bool connected() { return client.connected(); }
+bool connected() { return isConnected; }
 
 void publishState() {
-  if (!client.connected()) return;
-
   JsonDocument doc;
   doc["led"] = led::isOn();
   doc["uptime"] = millis() / 1000;
@@ -142,9 +255,7 @@ void publishState() {
 
   char buffer[256];
   size_t n = serializeJson(doc, buffer);
-  if (client.publish(topicState.c_str(), reinterpret_cast<const uint8_t*>(buffer), n, false)) {
-    firstStateSent = true;
-  }
+  if (publish(topicState, buffer, n, 0)) firstStateSent = true;
 }
 
 }  // namespace mqtt_link

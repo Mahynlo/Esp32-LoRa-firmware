@@ -1,9 +1,10 @@
 # esp32_lora — firmware del nodo
 
-Firmware del ESP32 que se conecta a **broker_api** por MQTTS. Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor. Versión actual: **0.2.0** (`FIRMWARE_VERSION`, se informa a la app como `fw`).
+Firmware del ESP32 que se conecta a **broker_api** por MQTT cifrado: **sobre WebSocket** (`wss://`, por defecto) o **por TCP** (`mqtts://`). Hoy controla el LED integrado de la placa (GPIO2, `LED_PIN` en `include/app_config.h`) como prueba previa al motor. Versión actual: **0.3.0** (`FIRMWARE_VERSION`, se informa a la app como `fw`).
 
 - Portal de configuración propio: Wi-Fi, servidor y **código de vinculación** (sin escribir id ni token a mano). Se vuelve a abrir con **BOOT 5 s** para cambiar la red o la IP sin perder la vinculación.
-- **Todo cifrado**: canjea el código por HTTPS y se conecta por MQTTS, validando el certificado del servidor.
+- **Todo cifrado**: canjea el código por HTTPS y se conecta por `wss://` o `mqtts://`, validando el certificado del servidor.
+- **Transporte a elegir en el portal**: WebSocket (`wss`, por el mismo puerto que la API: pasa por cualquier hosting con HTTPS) o TCP (`mqtts`, puerto 8883).
 - Enciende/apaga el LED con los comandos de la app y confirma cada uno (`ack`).
 - Informa su estado al conectar, al cambiar y cada 30 s (latido).
 - **Última voluntad** MQTT: si se corta la corriente, el broker avisa a la app en ~22 s.
@@ -25,7 +26,7 @@ pio device monitor            # ver los logs (115200 baudios)
 pio run -t upload -t monitor  # subir y abrir el monitor al terminar
 ```
 
-Librerías (se descargan solas): PubSubClient, ArduinoJson, WiFiManager.
+Librerías (se descargan solas): ArduinoJson, WiFiManager. El cliente MQTT es el de ESP-IDF (`esp_mqtt_client`), que ya viene en el core de Arduino y soporta `wss://` y `mqtts://`.
 
 **Antes de compilar** hace falta `include/ca_cert.h` (las autoridades en las que confía el ESP32). Lo genera broker_api:
 
@@ -40,21 +41,21 @@ Tabla de particiones `min_spiffs.csv` (`board_build.partitions` en `platformio.i
 
 ## Primera configuración (vinculación)
 
-1. Arranca **broker_api** (`pnpm dev`, con TLS configurado) y la app. La PC y el ESP32 deben estar en la misma red, con los puertos **3443** (HTTPS) y **8883** (MQTTS) permitidos en el Firewall de Windows.
+1. Arranca **broker_api** (`pnpm dev`, con TLS configurado) y la app. La PC y el ESP32 deben estar en la misma red, con el puerto **3443** (HTTPS y WebSocket) permitido en el Firewall de Windows; también el **8883** si eliges TCP.
 2. En la app: **Dispositivos → Agregar** → nombre → **Obtener código** (vale 10 minutos).
 3. Enciende el ESP32 con el monitor serie abierto. Sin configuración, el LED parpadea y crea la red **`ESP32-LORA-XXXX`**. Su clave aparece en el monitor (`[boot] Clave del portal de este equipo: K7QMX-2PARN`): **anótala en una etiqueta pegada al equipo**, es la misma para siempre.
 4. Conéctate a esa red desde el teléfono. Se abre el portal (si no, entra a `http://192.168.4.1`) → **Configure WiFi**.
-5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja los puertos 3443 y 8883 y escribe el código.
+5. Elige tu red Wi-Fi y su clave, escribe la **IP local de la PC** con broker_api (p. ej. `192.168.100.7`, no `localhost`), deja **Conexión** en `wss` y los puertos 3443 y 8883, y escribe el código.
 6. Al guardar, el ESP32 canjea el código, guarda su id y token y se reinicia. En la app aparece como **en línea**.
 
 En el monitor serie se ve cada paso. Un arranque normal se ve así:
 
 ```
-[boot] Firmware 0.2.0
+[boot] Firmware 0.3.0
 [boot] Clave del portal de este equipo: K7QMX-2PARN (anótala en una etiqueta)
-[boot] Dispositivo 4ce6a204-…, servidor 192.168.100.7
+[boot] Dispositivo 4ce6a204-…, servidor 192.168.100.7 (WebSocket)
 [wifi] Conectado, IP 192.168.100.23
-[mqtt] Conectando a 192.168.100.7:8883...
+[mqtt] Conectando a wss://192.168.100.7:3443/mqtt...
 [mqtt] Conectado
 [cmd] LED ENCENDIDO
 ```
@@ -64,7 +65,7 @@ En el monitor serie se ve cada paso. Un arranque normal se ve así:
 | `[boot]` | Arranque, versión, clave del portal, botón BOOT |
 | `[config]` | Portal, canje del código, configuración guardada |
 | `[wifi]` | Conexión y desconexión de la red |
-| `[mqtt]` | Conexión con el broker, errores de TLS (`[mqtt] TLS: ...`) y credenciales rechazadas |
+| `[mqtt]` | Conexión con el broker, errores de TLS (`[mqtt] TLS: ...`) o de red, reintentos y credenciales rechazadas |
 | `[cmd]` | Comandos ejecutados, repetidos o rechazados |
 
 ## Reconfigurar (cambiar Wi-Fi o IP del servidor)
@@ -73,10 +74,11 @@ Con el equipo **ya funcionando**, mantén presionado **BOOT 5 segundos**. Se rei
 
 En el portal (**Configure WiFi**) dice *"Este equipo ya está vinculado"*. Cambia solo lo que necesites:
 
-| Quiero… | SSID y contraseña | Servidor y puertos | Código |
+| Quiero… | SSID y contraseña | Servidor, conexión y puertos | Código |
 |---|---|---|---|
 | Cambiar de red Wi-Fi | La red nueva | Sin cambios | **Vacío** |
-| Cambiar la IP del servidor | **Vacíos** (conserva la red actual) | La IP nueva | **Vacío** |
+| Cambiar la IP o dominio del servidor | **Vacíos** (conserva la red actual) | La IP o dominio nuevo (en producción, puerto API **443**) | **Vacío** |
+| Cambiar entre WebSocket y TCP | Vacíos | **Conexión**: `wss` o `mqtts` | **Vacío** |
 | Vincularlo a otra cuenta | Vacíos o la red nueva | Sin cambios | Un código nuevo de la app |
 
 Al presionar **Save** guarda y se reinicia. Con el código vacío sigue siendo **el mismo dispositivo** en la app, con su historial. Si nadie usa el portal durante 5 minutos, se cierra solo y el equipo vuelve a funcionar como estaba.
@@ -100,7 +102,8 @@ src/
 ├── main.cpp           Arranque (portal o modo normal) y loop
 ├── config_store.*     NVS: servidor, puertos, id y token ("broker"); clave del portal ("device", no se borra); pedido de abrir el portal
 ├── provisioning.*     Portal WiFiManager (conserva red y vinculación si ya estaba vinculado; se cierra tras 5 min sin uso) y canje del código por HTTPS
-├── mqtt_link.*        Conexión MQTTS, última voluntad, reconexión, estado y ack
+├── mqtt_link.*        Cliente MQTT de ESP-IDF (wss:// o mqtts://), última voluntad, reconexión, estado y ack.
+│                      Corre en su propia tarea; sus eventos pasan al loop por una cola
 ├── commands.*         Validación de comandos (lista blanca, repetidos, antigüedad)
 └── led.*              Salida controlada (después: motor)
 ```
@@ -112,7 +115,8 @@ src/
 | Al subir: `Wrong boot mode detected (0x13)` o se queda en `Connecting......` | El monitor serie tiene el puerto abierto, o la placa no entró sola al modo de descarga | Cerrar el monitor (Ctrl+C) y volver a subir. Si sigue, mantener **BOOT** mientras dice `Connecting...` y soltarlo cuando empiece `Writing at...` |
 | Error al compilar: `ca_cert.h: No such file or directory` | Falta generar las CAs | `pnpm certs:dev --firmware <ruta de esta carpeta>` en broker_api |
 | `[mqtt] TLS: X509 - Certificate verification failed…` | La IP configurada no está en el certificado del servidor, o el firmware tiene otra CA | `pnpm certs:dev --host <IP>` en broker_api y reiniciar la API; si la CA cambió, recompilar y subir |
-| `[mqtt] Falló (estado -2)` sin línea `TLS:` | No llega al servidor: IP equivocada, firewall o API apagada | Revisar la IP (portal con BOOT 5 s), el firewall (8883) y que broker_api esté corriendo con TLS |
+| `[mqtt] Sin conexión con el servidor (errno …)` | No llega al servidor: IP equivocada, firewall o API apagada | Revisar la IP (portal con BOOT 5 s), el firewall (3443, u 8883 con TCP) y que broker_api esté corriendo con TLS |
+| Conecta y se desconecta enseguida por WebSocket | La API no tiene `/mqtt` (versión vieja) o el proxy no deja pasar WebSocket | Actualizar broker_api; en el proxy, permitir el *upgrade* a WebSocket (Caddy lo hace solo) |
 | `[config] No se pudo conectar con el servidor (connection refused)` | Puerto API equivocado (p. ej. 3000) o HTTPS apagado | Puerto **3443** en el portal; `TLS_CERT_FILE` en el `.env` de broker_api |
 | `[config] El servidor rechazó el código (HTTP 400)` | Código vencido (10 min), ya usado o mal escrito | Generar otro en la app |
 | No conozco la clave del portal | Se perdió la etiqueta | Conectar por USB y abrir el monitor: aparece al arrancar |

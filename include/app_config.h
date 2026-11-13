@@ -1,7 +1,7 @@
 #pragma once
 
 // Versión del firmware (se informa en devices/{id}/state como "fw")
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.0"
 
 // Pin del LED controlado desde la app (después: salida del motor).
 // 2 = LED integrado (azul) de la ESP32 DevKit, para pruebas sin cablear nada.
@@ -27,12 +27,21 @@
 
 // ── Configuración (portal) ───────────────────────────────────────────────
 // Valores sugeridos en el portal; se pueden cambiar ahí.
-// Todo va cifrado (TLS): HTTPS para canjear el código y MQTTS para el broker.
+// Todo va cifrado (TLS): HTTPS para canjear el código y wss:// o mqtts:// para el broker.
 // El ESP32 valida el certificado del servidor con las CAs de include/ca_cert.h
 // (lo genera broker_api con: pnpm certs:dev --firmware <esta carpeta>).
 #define DEFAULT_SERVER_HOST "192.168.1.10"
 #define DEFAULT_API_PORT 3443
 #define DEFAULT_MQTT_PORT 8883
+
+// Transporte MQTT:
+//   "wss"   MQTT sobre WebSocket por el puerto de la API (wss://servidor:3443/mqtt; 443 en
+//           producción detrás de un proxy). Pasa por cualquier hosting que acepte HTTPS.
+//   "mqtts" MQTT por TCP con TLS (mqtts://servidor:8883). Necesita ese puerto abierto.
+#define TRANSPORT_WSS "wss"
+#define TRANSPORT_MQTTS "mqtts"
+#define DEFAULT_TRANSPORT TRANSPORT_WSS
+#define MQTT_WS_PATH "/mqtt"
 
 // Versión del formato guardado en NVS. 2 = puertos con TLS: una configuración
 // guardada con los puertos sin cifrar (3000/1883) se pasa sola a 3443/8883.

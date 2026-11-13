@@ -45,6 +45,7 @@ DeviceConfig load() {
       prefs.getString("host", DEFAULT_SERVER_HOST),
       prefs.getUShort("apiPort", DEFAULT_API_PORT),
       prefs.getUShort("mqttPort", DEFAULT_MQTT_PORT),
+      prefs.getString("transport", DEFAULT_TRANSPORT),
       prefs.getString("deviceId", ""),
       prefs.getString("token", ""),
   };
@@ -58,6 +59,7 @@ void save(const DeviceConfig& config) {
   prefs.putString("host", config.host);
   prefs.putUShort("apiPort", config.apiPort);
   prefs.putUShort("mqttPort", config.mqttPort);
+  prefs.putString("transport", config.transport);
   prefs.putString("deviceId", config.deviceId);
   prefs.putString("token", config.token);
   prefs.putUChar("cfgVer", CONFIG_VERSION);

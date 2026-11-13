@@ -2,13 +2,15 @@
 
 #include <Arduino.h>
 
-// Conexión con broker_api por MQTTS (TLS, validando el certificado del servidor con
-// CA_CERTS de include/ca_cert.h). Protocolo: broker_api/docs/MQTT.md
+// Conexión con broker_api por MQTT cifrado, con el cliente MQTT de ESP-IDF:
+//   - wss://servidor:puerto/mqtt   MQTT sobre WebSocket (por defecto; mismo puerto que la API)
+//   - mqtts://servidor:8883        MQTT por TCP con TLS
+// En ambos casos valida el certificado del servidor con CA_CERTS (include/ca_cert.h)
+// antes de enviar el token. Protocolo: broker_api/docs/MQTT.md
 namespace mqtt_link {
 
 struct Config {
-  String host;
-  uint16_t port;
+  String uri;       // wss://… o mqtts://… (DeviceConfig::mqttUri)
   String deviceId;
   String token;
   // Se llama tras MAX_AUTH_FAILURES rechazos seguidos (dispositivo borrado o token rotado)
@@ -17,7 +19,8 @@ struct Config {
 
 void begin(const Config& config);
 
-// Llamar en cada vuelta del loop: reconecta con espera creciente y procesa mensajes
+// Llamar en cada vuelta del loop: conecta cuando hay Wi-Fi, procesa los eventos y
+// reconecta con espera creciente
 void loop();
 
 bool connected();

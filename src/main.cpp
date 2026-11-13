@@ -120,8 +120,9 @@ void setup() {
   // Hora por NTP para descartar comandos vencidos (si no hay internet, se omite esa revisión)
   configTime(0, 0, "pool.ntp.org", "time.google.com");
 
-  Serial.printf("[boot] Dispositivo %s, servidor %s\n", config.deviceId.c_str(), config.host.c_str());
-  mqtt_link::begin({config.host, config.mqttPort, config.deviceId, config.token, onUnauthorized});
+  Serial.printf("[boot] Dispositivo %s, servidor %s (%s)\n", config.deviceId.c_str(), config.host.c_str(),
+                config.useWebSocket() ? "WebSocket" : "TCP");
+  mqtt_link::begin({config.mqttUri(), config.deviceId, config.token, onUnauthorized});
 }
 
 void loop() {

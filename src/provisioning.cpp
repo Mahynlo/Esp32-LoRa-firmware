@@ -18,11 +18,15 @@ DeviceConfig config;
 
 // Campos extra del portal (además de la red Wi-Fi)
 char hostBuf[64];
+char transportBuf[8];
 char apiPortBuf[6];
 char mqttPortBuf[6];
-WiFiManagerParameter paramHost("host", "Servidor (IP de la PC con broker_api)", "", sizeof(hostBuf) - 1);
-WiFiManagerParameter paramApiPort("apiPort", "Puerto API (HTTPS)", "", sizeof(apiPortBuf) - 1);
-WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTT (MQTTS)", "", sizeof(mqttPortBuf) - 1);
+WiFiManagerParameter paramHost("host", "Servidor (IP o dominio de broker_api)", "", sizeof(hostBuf) - 1);
+WiFiManagerParameter paramTransport(
+    "transport", "Conexión: <b>wss</b> (WebSocket, por el puerto API) o <b>mqtts</b> (TCP)", "",
+    sizeof(transportBuf) - 1);
+WiFiManagerParameter paramApiPort("apiPort", "Puerto API (HTTPS; también WebSocket)", "", sizeof(apiPortBuf) - 1);
+WiFiManagerParameter paramMqttPort("mqttPort", "Puerto MQTTS (solo con mqtts)", "", sizeof(mqttPortBuf) - 1);
 WiFiManagerParameter paramCode("code", "Código de vinculación (lo muestra la app)", "", 12);
 
 // Ayuda que se muestra arriba de los campos cuando el equipo ya está vinculado
@@ -101,10 +105,21 @@ uint16_t portOr(const char* value, uint16_t fallback) {
   return port > 0 && port <= 65535 ? static_cast<uint16_t>(port) : fallback;
 }
 
+// "wss"/"websocket" o "mqtts"/"tcp"; vacío o desconocido: el anterior
+String transportOr(const char* value, const String& fallback) {
+  String transport = value;
+  transport.trim();
+  transport.toLowerCase();
+  if (transport == TRANSPORT_MQTTS || transport == "tcp") return TRANSPORT_MQTTS;
+  if (transport == TRANSPORT_WSS || transport == "ws" || transport == "websocket") return TRANSPORT_WSS;
+  return fallback;
+}
+
 void onSaveParams() {
   String host = paramHost.getValue();
   host.trim();
   if (host.length() > 0) config.host = host;
+  config.transport = transportOr(paramTransport.getValue(), config.transport);
   config.apiPort = portOr(paramApiPort.getValue(), config.apiPort);
   config.mqttPort = portOr(paramMqttPort.getValue(), config.mqttPort);
   paramsSaved = true;
@@ -125,14 +140,17 @@ void start(const DeviceConfig& current) {
   config = current;
   wasPaired = config.paired();
   snprintf(hostBuf, sizeof(hostBuf), "%s", config.host.c_str());
+  snprintf(transportBuf, sizeof(transportBuf), "%s", config.transport.c_str());
   snprintf(apiPortBuf, sizeof(apiPortBuf), "%u", config.apiPort);
   snprintf(mqttPortBuf, sizeof(mqttPortBuf), "%u", config.mqttPort);
   paramHost.setValue(hostBuf, sizeof(hostBuf) - 1);
+  paramTransport.setValue(transportBuf, sizeof(transportBuf) - 1);
   paramApiPort.setValue(apiPortBuf, sizeof(apiPortBuf) - 1);
   paramMqttPort.setValue(mqttPortBuf, sizeof(mqttPortBuf) - 1);
 
   if (wasPaired) wm.addParameter(&paramPairedHelp);
   wm.addParameter(&paramHost);
+  wm.addParameter(&paramTransport);
   wm.addParameter(&paramApiPort);
   wm.addParameter(&paramMqttPort);
   wm.addParameter(&paramCode);
@@ -202,8 +220,8 @@ void loop() {
   }
 
   config_store::save(config);
-  Serial.printf("[config] Servidor %s (API %u, MQTT %u). Reiniciando...\n",
-                config.host.c_str(), config.apiPort, config.mqttPort);
+  Serial.printf("[config] Servidor %s, API %u, MQTT %s. Reiniciando...\n",
+                config.host.c_str(), config.apiPort, config.mqttUri().c_str());
   led::set(false);
   delay(500);
   ESP.restart();
