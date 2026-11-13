@@ -23,6 +23,7 @@ Versión actual: **0.4.0** (`FIRMWARE_VERSION` en `include/common_config.h`; el 
 |---|---|
 | [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | **Empieza aquí para entender o cambiar el código**: módulos, diagramas de arranque y de un comando, y dónde tocar cada cosa |
 | [docs/GATEWAY.md](docs/GATEWAY.md) | Usar el gateway: vinculación con la app, portal de configuración, monitor serie y problemas comunes |
+| [docs/FALLAS.md](docs/FALLAS.md) | Qué pasa si falla el nodo, el gateway, la radio o el servidor: cómo se entera cada parte y cómo reacciona |
 | [docs/LORA.md](docs/LORA.md) | Enlace LoRa: formato de los mensajes, seguridad y la clave |
 | [docs/CABLEADO.md](docs/CABLEADO.md) | Hardware: placas, pines, colores de cable y verificación |
 
